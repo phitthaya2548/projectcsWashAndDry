@@ -67,15 +67,16 @@ class _StaffOrderDetailScreenState extends State<StaffOrderDetailScreen> {
       final response = await http.get(uri);
 
       final parsed = orderDetailResponseFromJson(response.body);
-log('statusCode = ${response.statusCode}');
-log('body = ${response.body}');
-     if (response.statusCode != 200 || parsed.ok != true) {
-  setState(() {
-    error = parsed.message ?? 'เกิดข้อผิดพลาด';
-    isLoading = false;
-  });
-  return;
-}
+      log('statusCode = ${response.statusCode}');
+      log('body = ${response.body}');
+
+      if (response.statusCode != 200 || parsed.ok != true) {
+        setState(() {
+          error = parsed.message ?? 'เกิดข้อผิดพลาด';
+          isLoading = false;
+        });
+        return;
+      }
 
       setState(() {
         orderDetailResponse = parsed;
@@ -200,94 +201,6 @@ log('body = ${response.body}');
           ),
         ],
       ),
-    );
-  }
-
-  Widget buildPersonCard({
-    required IconData icon,
-    required String role,
-    required String? fullname,
-    required String? phone,
-    required String? profileImage,
-    String? licensePlate,
-    String? vehicleType,
-  }) {
-    final hasImage = profileImage != null && profileImage.isNotEmpty;
-
-    return Row(
-      children: [
-        CircleAvatar(
-          radius: 24,
-          backgroundColor: const Color(0xFFE3F4FC),
-          backgroundImage: hasImage ? NetworkImage(profileImage) : null,
-          child: hasImage
-              ? null
-              : Icon(
-                  icon,
-                  color: const Color(0xFF29ABE2),
-                  size: 22,
-                ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                role,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Color(0xFF29ABE2),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                fullname ?? '-',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: Color(0xFF1A1A2E),
-                ),
-              ),
-              const SizedBox(height: 3),
-              Row(
-                children: [
-                  Icon(Icons.phone_rounded,
-                      size: 12, color: Colors.grey.shade400),
-                  const SizedBox(width: 4),
-                  Text(
-                    phone ?? '-',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade500,
-                    ),
-                  ),
-                ],
-              ),
-              if (vehicleType != null && vehicleType.isNotEmpty) ...[
-                const SizedBox(height: 3),
-                Text(
-                  'ประเภทรถ: $vehicleType',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
-              if (licensePlate != null && licensePlate.isNotEmpty) ...[
-                const SizedBox(height: 3),
-                Text(
-                  'ทะเบียน: $licensePlate',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
     );
   }
 
@@ -486,24 +399,6 @@ log('body = ${response.body}');
     );
   }
 
- 
-
-  Widget buildRiderPickupSection(OrderDetailData o) {
-    return buildCard(
-      icon: Icons.people_rounded,
-      title: 'ไรเดอร์รับผ้า',
-      child: buildPersonCard(
-        icon: Icons.directions_bike_rounded,
-        role: 'ไรเดอร์รับผ้า',
-        fullname: o.riderPickup?.fullname,
-        phone: o.riderPickup?.phone,
-        profileImage: o.riderPickup?.profileImage,
-        licensePlate: o.riderPickup?.licensePlate,
-        vehicleType: o.riderPickup?.vehicleType,
-      ),
-    );
-  }
-
   Widget buildImageSection(OrderDetailData o) {
     return buildCard(
       icon: Icons.photo_library_rounded,
@@ -511,8 +406,6 @@ log('body = ${response.body}');
       child: Row(
         children: [
           buildImageBox(o.beforeWashImage, 'ก่อนซัก'),
-          const SizedBox(width: 12),
-          buildImageBox(o.afterWashImage, 'หลังซัก'),
         ],
       ),
     );
@@ -597,12 +490,6 @@ log('body = ${response.body}');
 
                           buildServiceSection(o),
                           const SizedBox(height: 12),
-
-
-                          if (o.riderPickup != null) ...[
-                            buildRiderPickupSection(o),
-                            const SizedBox(height: 12),
-                          ],
 
                           buildImageSection(o),
                           const SizedBox(height: 24),

@@ -21,7 +21,8 @@ class _StaffRegisterScreenState extends State<StaffRegisterScreen> {
   static const lightBlue = Color(0xFFEFF7FF);
   static const darkText = Color(0xFF1A2332);
 
-  final _formKey = GlobalKey<FormState>();
+  final _accountFormKey = GlobalKey<FormState>();
+  final _personalFormKey = GlobalKey<FormState>();
   final _picker = ImagePicker();
   final _controllers = {
     'email': TextEditingController(),
@@ -36,6 +37,7 @@ class _StaffRegisterScreenState extends State<StaffRegisterScreen> {
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _isLoading = false;
+  int _currentStep = 0;
   String url = '';
 
   @override
@@ -176,7 +178,6 @@ class _StaffRegisterScreenState extends State<StaffRegisterScreen> {
 
   Future<void> _submitForm() async {
     FocusScope.of(context).unfocus();
-    if (!_formKey.currentState!.validate()) return;
 
     if (_controllers['password']!.text != _controllers['confirmPassword']!.text) {
       _snack('รหัสผ่านไม่ตรงกัน', false);
@@ -316,6 +317,312 @@ class _StaffRegisterScreenState extends State<StaffRegisterScreen> {
     );
   }
 
+  void _nextStep() {
+    FocusScope.of(context).unfocus();
+
+    if (_currentStep == 0) {
+      if (!(_accountFormKey.currentState?.validate() ?? false)) return;
+
+      if (_controllers['password']!.text !=
+          _controllers['confirmPassword']!.text) {
+        _snack('รหัสผ่านไม่ตรงกัน', false);
+        return;
+      }
+    }
+
+    if (_currentStep < 1) {
+      setState(() => _currentStep++);
+    }
+  }
+
+  void _previousStep() {
+    FocusScope.of(context).unfocus();
+
+    if (_currentStep > 0) {
+      setState(() => _currentStep--);
+    } else {
+      Navigator.pop(context);
+    }
+  }
+
+  Widget _stepProgress() {
+    const titles = ['บัญชี', 'ข้อมูลส่วนตัว'];
+
+    return Row(
+      children: List.generate(2, (index) {
+        final active = index <= _currentStep;
+        final current = index == _currentStep;
+
+        return Expanded(
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: current ? 34 : 30,
+                      height: current ? 34 : 30,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: active ? primaryBlue : const Color(0xFFE8EDF3),
+                        shape: BoxShape.circle,
+                      ),
+                      child: index < _currentStep
+                          ? const Icon(
+                              Icons.check_rounded,
+                              color: Colors.white,
+                              size: 18,
+                            )
+                          : Text(
+                              '${index + 1}',
+                              style: TextStyle(
+                                color: active
+                                    ? Colors.white
+                                    : Colors.black38,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      titles[index],
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: current
+                            ? FontWeight.w800
+                            : FontWeight.w600,
+                        color: current ? primaryBlue : Colors.black38,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (index < 1)
+                Expanded(
+                  child: Container(
+                    height: 2,
+                    margin: const EdgeInsets.only(bottom: 22),
+                    color: index < _currentStep
+                        ? primaryBlue
+                        : const Color(0xFFE8EDF3),
+                  ),
+                ),
+            ],
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _accountStep() {
+    return Form(
+      key: _accountFormKey,
+      child: Column(
+        key: const ValueKey('account'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionLabel('ข้อมูลบัญชี'),
+          const SizedBox(height: 12),
+          _field(
+            controller: _controllers['username']!,
+            hint: 'Username',
+            icon: Icons.person_outline,
+            validator: (v) {
+              final s = (v ?? '').trim();
+              if (s.isEmpty) return 'กรุณากรอก username';
+              if (s.length < 3) return 'อย่างน้อย 3 ตัวอักษร';
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          _field(
+            controller: _controllers['password']!,
+            hint: 'Password',
+            icon: Icons.lock_outline,
+            obscure: _obscurePassword,
+            onToggleObscure: () =>
+                setState(() => _obscurePassword = !_obscurePassword),
+            validator: (v) {
+              final s = (v ?? '').trim();
+              if (s.isEmpty) return 'กรุณากรอกรหัสผ่าน';
+              if (s.length < 6) return 'อย่างน้อย 6 ตัวอักษร';
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          _field(
+            controller: _controllers['confirmPassword']!,
+            hint: 'Confirm Password',
+            icon: Icons.check_circle_outline,
+            obscure: _obscureConfirmPassword,
+            onToggleObscure: () => setState(
+              () => _obscureConfirmPassword = !_obscureConfirmPassword,
+            ),
+            validator: (v) {
+              if ((v ?? '').isEmpty) return 'กรุณายืนยันรหัสผ่าน';
+              if (v != _controllers['password']!.text) {
+                return 'รหัสผ่านไม่ตรงกัน';
+              }
+              return null;
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _personalStep() {
+    return Form(
+      key: _personalFormKey,
+      child: Column(
+        key: const ValueKey('personal'),
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionLabel('ข้อมูลส่วนตัว'),
+          const SizedBox(height: 12),
+          _field(
+            controller: _controllers['fullName']!,
+            hint: 'ชื่อ-นามสกุล',
+            icon: Icons.badge_outlined,
+            validator: (v) =>
+                (v ?? '').trim().isEmpty ? 'กรุณากรอกชื่อ-นามสกุล' : null,
+          ),
+          const SizedBox(height: 12),
+          _field(
+            controller: _controllers['email']!,
+            hint: 'Email',
+            icon: Icons.email_outlined,
+            keyboardType: TextInputType.emailAddress,
+            validator: (v) {
+              final s = (v ?? '').trim();
+              if (s.isEmpty) return 'กรุณากรอกอีเมล';
+              if (!GetUtils.isEmail(s)) return 'รูปแบบอีเมลไม่ถูกต้อง';
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          _field(
+            controller: _controllers['phone']!,
+            hint: 'เบอร์โทรศัพท์',
+            icon: Icons.phone_outlined,
+            keyboardType: TextInputType.phone,
+            validator: (v) {
+              final s = (v ?? '').trim();
+              if (s.isEmpty) return 'กรุณากรอกเบอร์โทร';
+              if (s.length < 9) return 'เบอร์โทรศัพท์ไม่ถูกต้อง';
+              return null;
+            },
+          ),
+          const SizedBox(height: 20),
+          _divider(),
+          const SizedBox(height: 16),
+          _sectionLabel('รูปโปรไฟล์'),
+          const SizedBox(height: 8),
+          Text(
+            'เพิ่มรูปถ่ายพนักงาน',
+            style: TextStyle(
+              fontSize: 12.5,
+              color: Colors.black.withOpacity(0.45),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _imagePicker(),
+        ],
+      ),
+    );
+  }
+
+  Widget _stepContent() {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 220),
+      transitionBuilder: (child, animation) {
+        return FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0.04, 0),
+              end: Offset.zero,
+            ).animate(animation),
+            child: child,
+          ),
+        );
+      },
+      child: _currentStep == 0
+          ? _accountStep()
+          : _personalStep(),
+    );
+  }
+
+  Widget _stepButtons() {
+    final isLast = _currentStep == 1;
+
+    return Row(
+      children: [
+        Expanded(
+          child: OutlinedButton(
+            onPressed: _isLoading ? null : _previousStep,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: darkText,
+              side: const BorderSide(color: Color(0xFFDCE3EA)),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: Text(
+              _currentStep == 0 ? 'ย้อนกลับ' : 'ก่อนหน้า',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: ElevatedButton(
+            onPressed: _isLoading
+                ? null
+                : isLast
+                    ? () {
+                        FocusScope.of(context).unfocus();
+                        if (_personalFormKey.currentState?.validate() ?? false) {
+                          _submitForm();
+                        }
+                      }
+                    : _nextStep,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryBlue,
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: primaryBlue.withOpacity(0.55),
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            child: _isLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Text(
+                    isLast ? 'สมัครพนักงาน' : 'ถัดไป',
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final h = MediaQuery.of(context).size.height;
@@ -323,36 +630,43 @@ class _StaffRegisterScreenState extends State<StaffRegisterScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          // ── Background ──
           Positioned.fill(
-            child: Image.asset('assets/images/bg.png', fit: BoxFit.cover),
+            child: Image.asset(
+              'assets/images/bg.png',
+              fit: BoxFit.cover,
+            ),
           ),
           Positioned.fill(
-            child: Container(color: Colors.black.withOpacity(0.05)),
+            child: Container(
+              color: Colors.black.withOpacity(0.05),
+            ),
           ),
-
           SafeArea(
             child: Center(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 18,
+                ),
                 child: Column(
                   children: [
-                    // ── Logo ──
                     Transform.translate(
                       offset: Offset(0, -h * 0.02),
                       child: ClipOval(
                         child: Image.asset(
                           'assets/images/logo.png',
-
                           fit: BoxFit.cover,
                         ),
                       ),
                     ),
-
-                    // ── Main Card ──
                     Container(
                       width: 360,
-                      padding: const EdgeInsets.fromLTRB(20, 22, 20, 18),
+                      padding: const EdgeInsets.fromLTRB(
+                        20,
+                        22,
+                        20,
+                        20,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(24),
@@ -364,167 +678,37 @@ class _StaffRegisterScreenState extends State<StaffRegisterScreen> {
                           ),
                         ],
                       ),
-                      child: Form(
-                        key: _formKey,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            // ── Header ──
-                            Center(
-                              child: Column(
-                                children: [
-                                  const Text(
-                                    'Register',
-                                    style: TextStyle(
-                                      fontSize: 28,
-                                      fontWeight: FontWeight.w900,
-                                      color: primaryBlue,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'กรอกข้อมูลเพื่อสร้างบัญชีพนักงาน',
-                                    style: TextStyle(
-                                      fontSize: 14.5,
-                                      color: Colors.black.withOpacity(0.45),
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Center(
+                            child: Text(
+                              'Register',
+                              style: TextStyle(
+                                fontSize: 28,
+                                fontWeight: FontWeight.w900,
+                                color: primaryBlue,
                               ),
                             ),
-
-                            const SizedBox(height: 20),
-                            _sectionLabel('ข้อมูลบัญชี'),
-                            const SizedBox(height: 10),
-
-                            _field(
-                              controller: _controllers['username']!,
-                              hint: 'Username',
-                              icon: Icons.person_outline,
-                              validator: (v) {
-                                final s = (v ?? '').trim();
-                                if (s.isEmpty) return 'กรุณากรอก username';
-                                if (s.length < 3) return 'อย่างน้อย 3 ตัวอักษร';
-                                return null;
-                              },
-                            ),
-                            const SizedBox(height: 10),
-                            _field(
-                              controller: _controllers['password']!,
-                              hint: 'Password',
-                              icon: Icons.lock_outline,
-                              obscure: _obscurePassword,
-                              onToggleObscure: () =>
-                                  setState(() => _obscurePassword = !_obscurePassword),
-                              validator: (v) {
-                                final s = (v ?? '').trim();
-                                if (s.isEmpty) return 'กรุณากรอกรหัสผ่าน';
-                                if (s.length < 6) return 'อย่างน้อย 6 ตัวอักษร';
-                                return null;
-                              },
-                            ),
-                            const SizedBox(height: 10),
-                            _field(
-                              controller: _controllers['confirmPassword']!,
-                              hint: 'Confirm Password',
-                              icon: Icons.check_circle_outline,
-                              obscure: _obscureConfirmPassword,
-                              onToggleObscure: () => setState(
-                                () => _obscureConfirmPassword = !_obscureConfirmPassword,
-                              ),
-                              validator: (v) =>
-                                  v != _controllers['password']!.text
-                                      ? 'รหัสผ่านไม่ตรงกัน'
-                                      : null,
-                            ),
-
-                            const SizedBox(height: 18),
-                            _divider(),
-                            const SizedBox(height: 14),
-                            _sectionLabel('ข้อมูลส่วนตัว'),
-                            const SizedBox(height: 10),
-
-                            _field(
-                              controller: _controllers['fullName']!,
-                              hint: 'ชื่อ-นามสกุล',
-                              icon: Icons.badge_outlined,
-                              validator: (v) =>
-                                  (v ?? '').trim().isEmpty ? 'กรุณากรอกชื่อ-นามสกุล' : null,
-                            ),
-                            const SizedBox(height: 10),
-                            _field(
-                              controller: _controllers['email']!,
-                              hint: 'Email',
-                              icon: Icons.email_outlined,
-                              keyboardType: TextInputType.emailAddress,
-                              validator: (v) {
-                                final s = (v ?? '').trim();
-                                if (s.isEmpty) return 'กรุณากรอกอีเมล';
-                                if (!GetUtils.isEmail(s)) return 'รูปแบบอีเมลไม่ถูกต้อง';
-                                return null;
-                              },
-                            ),
-                            const SizedBox(height: 10),
-                            _field(
-                              controller: _controllers['phone']!,
-                              hint: 'เบอร์โทรศัพท์',
-                              icon: Icons.phone_outlined,
-                              keyboardType: TextInputType.phone,
-                              validator: (v) {
-                                final s = (v ?? '').trim();
-                                if (s.isEmpty) return 'กรุณากรอกเบอร์โทร';
-                                if (s.length < 9) return 'เบอร์โทรศัพท์ไม่ถูกต้อง';
-                                return null;
-                              },
-                            ),
-
-                            const SizedBox(height: 18),
-                            _divider(),
-                            const SizedBox(height: 14),
-                            _sectionLabel('รูปถ่ายพนักงาน'),
-                            const SizedBox(height: 10),
-
-                            _imagePicker(),
-
-                            const SizedBox(height: 22),
-                            _submitButton(),
-                            const SizedBox(height: 14),
-
-                            // ── Back ──
-                            Center(
-                              child: InkWell(
-                                onTap: () => Navigator.pop(context),
-                                borderRadius: BorderRadius.circular(20),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 6,
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.arrow_back_ios_new,
-                                        size: 13,
-                                        color: Colors.black.withOpacity(0.40),
-                                      ),
-                                      const SizedBox(width: 5),
-                                      Text(
-                                        'ย้อนกลับ',
-                                        style: TextStyle(
-                                          fontSize: 12.5,
-                                          color: Colors.black.withOpacity(0.40),
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
+                          ),
+                          const SizedBox(height: 4),
+                          Center(
+                            child: Text(
+                              'สมัครบัญชีพนักงานซักอบ',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.black.withOpacity(0.45),
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(height: 22),
+                          _stepProgress(),
+                          const SizedBox(height: 22),
+                          _stepContent(),
+                          const SizedBox(height: 24),
+                          _stepButtons(),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 18),
@@ -637,111 +821,111 @@ class _StaffRegisterScreenState extends State<StaffRegisterScreen> {
     );
   }
 
-  Widget _imagePicker() {
-    return GestureDetector(
-      onTap: _pickImage,
-      child: Center(
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          height: 120,
-          
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(14.5),
-            child: _profileImage != null
-                ? Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Image.file(_profileImage!, fit: BoxFit.cover),
-                      Positioned(
-                        top: 8,
-                        right: 8,
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withOpacity(0.50),
-                            borderRadius: BorderRadius.circular(8),
+Widget _imagePicker() {
+  return GestureDetector(
+    onTap: _pickImage,
+    child: Center(
+      child: Column(
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 130,
+                height: 130,
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white,
+                  border: Border.all(
+                    color: primaryBlue.withOpacity(0.25),
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.08),
+                      blurRadius: 14,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: ClipOval(
+                  child: _profileImage != null
+                      ? Image.file(
+                          _profileImage!,
+                          width: 122,
+                          height: 122,
+                          fit: BoxFit.cover,
+                        )
+                      : Container(
+                          color: primaryBlue.withOpacity(0.08),
+                          child: const Icon(
+                            Icons.person_rounded,
+                            size: 58,
+                            color: primaryBlue,
                           ),
-                          child: const Icon(Icons.edit, color: Colors.white, size: 16),
                         ),
-                      ),
-                    ],
-                  )
-                : Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: primaryBlue.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(
-                          Icons.add_a_photo_outlined,
-                          color: primaryBlue,
-                          size: 22,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'เพิ่มรูปถ่ายพนักงาน',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.black.withOpacity(0.55),
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'แตะเพื่อเลือกรูปภาพ',
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: Colors.black.withOpacity(0.35),
-                        ),
+                ),
+              ),
+
+              Positioned(
+                right: 2,
+                bottom: 5,
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: primaryBlue,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white,
+                      width: 3,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
                       ),
                     ],
                   ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _submitButton() {
-    return SizedBox(
-      width: double.infinity,
-      height: 50,
-      child: ElevatedButton(
-        onPressed: _isLoading ? null : _submitForm,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: primaryBlue,
-          foregroundColor: Colors.white,
-          disabledBackgroundColor: primaryBlue.withOpacity(0.55),
-          elevation: 6,
-          shadowColor: primaryBlue.withOpacity(0.40),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-          ),
-        ),
-        child: _isLoading
-            ? const SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
-                  valueColor: AlwaysStoppedAnimation(Colors.white),
-                ),
-              )
-            : const Text(
-                'สร้างบัญชีพนักงาน',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0.3,
+                  child: Icon(
+                    _profileImage == null
+                        ? Icons.add_a_photo_rounded
+                        : Icons.edit_rounded,
+                    color: Colors.white,
+                    size: 18,
+                  ),
                 ),
               ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+
+          Text(
+            _profileImage == null
+                ? 'เพิ่มรูปถ่ายพนักงาน'
+                : 'เปลี่ยนรูปโปรไฟล์',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: darkText,
+            ),
+          ),
+
+          const SizedBox(height: 3),
+
+          Text(
+            'แตะที่รูปเพื่อเลือกภาพ',
+            style: TextStyle(
+              fontSize: 11.5,
+              color: Colors.black.withOpacity(0.35),
+            ),
+          ),
+        ],
       ),
-    );
-  }
+    ),
+  );
+}
 }

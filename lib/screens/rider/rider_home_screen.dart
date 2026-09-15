@@ -587,7 +587,7 @@ class _OrderCard extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(
-            '#${item.orderId.substring(0, 10).toUpperCase()}',
+            '#${item.orderId.substring(0, 8).toUpperCase()}',
             style: const TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 15,
@@ -617,6 +617,10 @@ class _OrderCard extends StatelessWidget {
           if (item.customerPhone.isNotEmpty) ...[
             const SizedBox(height: 4),
             _IconRow(icon: Icons.phone_outlined, text: item.customerPhone),
+             _IconRow(
+    icon: Icons.access_time,
+    text: _orderDateTimeText,
+  ),
           ],
           const SizedBox(height: 10),
           Row(
@@ -647,7 +651,17 @@ class _OrderCard extends StatelessWidget {
       ),
     );
   }
+String get _orderDateTimeText {
+  final timestamp = item.data['order_datetime'];
 
+  if (timestamp is! Timestamp) return '';
+
+  final dateTime = timestamp.toDate();
+
+  return '${dateTime.day}/${dateTime.month}/${dateTime.year + 543} '
+      '${dateTime.hour.toString().padLeft(2, '0')}:'
+      '${dateTime.minute.toString().padLeft(2, '0')} น.';
+}
   Widget _buildActions() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),

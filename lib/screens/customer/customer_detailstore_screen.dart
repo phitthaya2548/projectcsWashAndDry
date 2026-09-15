@@ -22,7 +22,7 @@ class CustomerStoreDetailScreen extends StatefulWidget {
 }
 
 class _CustomerStoreDetailState extends State<CustomerStoreDetailScreen> {
-  static const _kPrimary = Color(0xFF1A73E8);
+  static const _kPrimary = Color(0xFF0EA5E9);
   static const _kAccent = Color(0xFF0593FF);
   static const _kTextDark = Color(0xFF0D1B2A);
   static const _kTextGray = Color(0xFF6B7280);
@@ -208,14 +208,14 @@ class _CustomerStoreDetailState extends State<CustomerStoreDetailScreen> {
         backgroundColor: _kBg,
         appBar: AppBar(
           flexibleSpace: Container(
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [_kAccent, Color(0xFF0476D9)],
-              ),
-            ),
-          ),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF0593FF), Color(0xFF0476D9)],
+        ),
+      ),
+    ),
           elevation: 0,
           centerTitle: true,
           leading: IconButton(
@@ -708,13 +708,30 @@ class _CustomerStoreDetailState extends State<CustomerStoreDetailScreen> {
             icon: Icons.my_location_rounded,
             customIcon: const FaIcon(
               FontAwesomeIcons.locationCrosshairs,
-              color: _kFacebook,
+              color: _kPrimary,
               size: 18,
             ),
-            iconColor: _kFacebook,
+            iconColor: _kPrimary,
             text: 'รับส่งสูงสุด ${store.serviceRadius.toStringAsFixed(0)} กม.',
             isLast: true,
           ),
+_infoRow(
+  icon: Icons.local_laundry_service_rounded, // ไม่ถูกใช้เพราะมี customIcon
+  customIcon: const FaIcon(
+    FontAwesomeIcons.bottleDroplet,
+    color: _kPrimary,
+    size: 18,
+  ),
+  iconColor: _kPrimary,
+  text: 'ค่าน้ำยาซัก ${store.detergentprice.toStringAsFixed(0)} บาท',
+  isLast: true,
+),
+_infoRow(
+  icon: Icons.delivery_dining_outlined,
+  iconColor: _kPrimary,
+  text: 'ค่าส่ง ต่ำสุด ${store.min_delivery_price.toStringAsFixed(0)} - สูงสุด ${store.max_delivery_price.toStringAsFixed(0)} บาท',
+  isLast: false,
+),
         ]),
       ],
     );

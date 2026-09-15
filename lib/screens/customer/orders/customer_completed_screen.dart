@@ -46,7 +46,7 @@ class _CustomerCompletedScreenState extends State<CustomerCompletedScreen> {
     });
     try {
       final res = await http.get(
-        Uri.parse('$url/order/completed/${widget.orderId}'),
+        Uri.parse('$url/order/customer/completed/${widget.orderId}'),
         headers: {'Content-Type': 'application/json'},
       );
       if (res.statusCode == 200) {
@@ -173,9 +173,9 @@ class _CustomerCompletedScreenState extends State<CustomerCompletedScreen> {
                   _buildRow(
                     'น้ำยาซัก',
                     o.detergentOption == 'no_detergent'
-                        ? 'ไม่ใช้น้ำยาซัก'
+                        ? 'ใช้น้ำยาซักผ้าของร้าน'
                         : o.detergentOption == 'detergent'
-                            ? 'ใช้น้ำยาซักผ้าของร้าน'
+                            ? 'ใช้น้ำยาซักผ้าตัวเอง'
                             : o.detergentOption ?? '-',
                   ),
                 if (o.note != null && o.note!.isNotEmpty)
@@ -192,8 +192,9 @@ class _CustomerCompletedScreenState extends State<CustomerCompletedScreen> {
               children: [
                 _buildRow('ค่าซัก', '${o.servicePrice.toInt()} ฿'), 
                 _buildRow('ค่าจัดส่ง', '${o.deliveryPrice.toInt()} ฿'), 
-                if (o.detergentOption != null && o.detergentOption != 'no_detergent')
-                  _buildRow('ค่าน้ำยาซัก', '${o.detergentPrice.toInt()} ฿'),
+                if (o.detergentPrice > 0)
+                    _buildRow('ค่าน้ำยาซัก', '${o.detergentPrice.toInt()} ฿'),
+  
   
                   
                 const Padding(
@@ -260,7 +261,7 @@ class _CustomerCompletedScreenState extends State<CustomerCompletedScreen> {
                       role: 'ไรเดอร์ส่งผ้า',
                       fullname: o.riderDelivery!.fullname,
                       phone: o.riderDelivery!.phone,
-                      vehicleType: o.riderPickup?.vehicleType,
+                      vehicleType: o.riderDelivery?.vehicleType,
                       imageUrl: o.riderDelivery!.profileImage,
                       extra: o.riderDelivery!.licensePlate,
                     ),
@@ -431,6 +432,24 @@ class _CustomerCompletedScreenState extends State<CustomerCompletedScreen> {
     );
   }
 
+  String _vehicleText(String value) {
+    // Backend ส่งค่าเป็นภาษาอังกฤษ แต่ UI แสดงภาษาไทย
+    const vehicleMap = {
+      'motorcycle': 'มอเตอร์ไซค์',
+      'motorbike': 'มอเตอร์ไซค์',
+      'car': 'รถยนต์',
+
+      // รองรับข้อมูลเก่าที่อาจเก็บเป็นภาษาไทย
+      'มอเตอร์ไซค์': 'มอเตอร์ไซค์',
+      'จักรยานยนต์': 'มอเตอร์ไซค์',
+      'รถจักรยานยนต์': 'มอเตอร์ไซค์',
+      'รถยนต์': 'รถยนต์',
+    };
+
+    final normalized = value.trim().toLowerCase();
+    return vehicleMap[normalized] ?? value;
+  }
+
   Widget _buildPersonRow({
     required IconData icon,
     required String role,
@@ -498,7 +517,7 @@ class _CustomerCompletedScreenState extends State<CustomerCompletedScreen> {
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
-                        vehicleType,
+                        _vehicleText(vehicleType),
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey.shade500,

@@ -189,7 +189,6 @@ class _StaffHomeScreenState extends State<StaffHomeScreen> {
     return (text: 'ไม่ระบุที่อยู่');
   }
 
-  // แปลงรหัสสถานะเป็นข้อความภาษาไทย โดยรับค่าปัจจุบันเข้ามาโดยตรง
   // (ไม่ใช่ field ที่คำนวณครั้งเดียวตอนสร้าง object เหมือนโค้ดเดิม)
   String _statusText(String? status) => switch (status) {
         'ONLINE' => 'ใช้งาน',
@@ -377,7 +376,10 @@ class _OrderCard extends StatelessWidget {
   final _OrderItem item;
   final VoidCallback onStartWash;
 
-  const _OrderCard({required this.item, required this.onStartWash});
+  const _OrderCard({
+    required this.item,
+    required this.onStartWash,
+  });
 
   String _serviceLabel(String s) =>
       const {
@@ -386,6 +388,18 @@ class _OrderCard extends StatelessWidget {
         'wash_dry': 'ซัก + อบ',
       }[s] ??
       s;
+
+  String get _orderDateTimeText {
+    final timestamp = item.data['order_datetime'];
+
+    if (timestamp is! Timestamp) return '';
+
+    final dateTime = timestamp.toDate();
+
+    return '${dateTime.day}/${dateTime.month}/${dateTime.year + 543} '
+        '${dateTime.hour.toString().padLeft(2, '0')}:'
+        '${dateTime.minute.toString().padLeft(2, '0')} น.';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -408,18 +422,23 @@ class _OrderCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-          
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                      padding: const EdgeInsets.fromLTRB(
+                        16,
+                        14,
+                        16,
+                        10,
+                      ),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        mainAxisAlignment:
+                            MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            '#${item.orderId.substring(0, 10).toUpperCase()}',
+                            '#${item.orderId.substring(0, 8).toUpperCase()}',
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 15,
@@ -428,10 +447,13 @@ class _OrderCard extends StatelessWidget {
                           ),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 4),
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: const Color(0xFFEAF5FF),
-                              borderRadius: BorderRadius.circular(20),
+                              borderRadius:
+                                  BorderRadius.circular(20),
                             ),
                             child: Text(
                               isDry ? 'รออบ' : 'รอซัก',
@@ -445,50 +467,88 @@ class _OrderCard extends StatelessWidget {
                         ],
                       ),
                     ),
+
                     const Divider(height: 1),
 
                     Padding(
                       padding: const EdgeInsets.all(14),
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
                         children: [
                           Text(
                             item.customerName,
                             style: const TextStyle(
-                                fontWeight: FontWeight.w600, fontSize: 14),
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                            ),
                           ),
+
                           const SizedBox(height: 6),
+
                           _iconRow(
-                              Icons.location_on_outlined, item.addressText),
+                            Icons.location_on_outlined,
+                            item.addressText,
+                          ),
+
                           if (item.customerPhone.isNotEmpty) ...[
                             const SizedBox(height: 4),
                             _iconRow(
-                                Icons.phone_outlined, item.customerPhone),
+                              Icons.phone_outlined,
+                              item.customerPhone,
+                            ),
                           ],
+
+                          if (_orderDateTimeText.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            _iconRow(
+                              Icons.access_time,
+                              _orderDateTimeText,
+                            ),
+                          ],
+
                           const SizedBox(height: 10),
+
                           _buildChip(
                             'บริการ:',
                             _serviceLabel(
-                                item.data['service_type']?.toString() ?? ''),
+                              item.data['service_type']
+                                      ?.toString() ??
+                                  '',
+                            ),
                             Colors.grey.shade100,
                             Colors.black87,
-                            icon: Icons.local_laundry_service,
+                            icon:
+                                Icons.local_laundry_service,
                           ),
-                          if ((item.data['note']?.toString() ?? '')
+
+                          if ((item.data['note']
+                                      ?.toString() ??
+                                  '')
                               .isNotEmpty) ...[
                             const SizedBox(height: 8),
                             Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                              crossAxisAlignment:
+                                  CrossAxisAlignment.start,
                               children: [
-                                Text('หมายเหตุ: ',
-                                    style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey.shade600)),
+                                Text(
+                                  'หมายเหตุ: ',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color:
+                                        Colors.grey.shade600,
+                                  ),
+                                ),
                                 Expanded(
                                   child: Text(
-                                    item.data['note'],
-                                    style: const TextStyle(
-                                        fontSize: 12, color: Colors.black87),
+                                    item.data['note']
+                                        .toString(),
+                                    style:
+                                        const TextStyle(
+                                      fontSize: 12,
+                                      color:
+                                          Colors.black87,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -499,54 +559,90 @@ class _OrderCard extends StatelessWidget {
                     ),
 
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+                      padding:
+                          const EdgeInsets.fromLTRB(
+                        14,
+                        0,
+                        14,
+                        14,
+                      ),
                       child: Row(
                         children: [
                           Expanded(
                             child: OutlinedButton(
                               onPressed: () {
-                                Get.to(() => StaffOrderDetailScreen(
-                                    orderId: item.orderId));
+                                Get.to(
+                                  () =>
+                                      StaffOrderDetailScreen(
+                                    orderId:
+                                        item.orderId,
+                                  ),
+                                );
                               },
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: const Color(0xFF0593FF),
+                              style:
+                                  OutlinedButton.styleFrom(
+                                foregroundColor:
+                                    const Color(
+                                        0xFF0593FF),
                                 side: const BorderSide(
-                                    color: Color(0xFF0593FF)),
+                                  color:
+                                      Color(0xFF0593FF),
+                                ),
                                 padding:
-                                    const EdgeInsets.symmetric(vertical: 13),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12)),
+                                    const EdgeInsets.symmetric(
+                                  vertical: 13,
+                                ),
+                                shape:
+                                    RoundedRectangleBorder(
+                                  borderRadius:
+                                      BorderRadius.circular(
+                                          12),
+                                ),
                               ),
-                              child: const Text('รายละเอียด',
-                                  style: TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.bold)),
+                              child: const Text(
+                                'รายละเอียด',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight:
+                                      FontWeight.bold,
+                                ),
+                              ),
                             ),
                           ),
+
                           const SizedBox(width: 10),
+
                           Expanded(
                             child: ElevatedButton.icon(
                               onPressed: onStartWash,
-                              icon: Icon(
-                                isDry
-                                    ? Icons.dry_cleaning
-                                    : Icons.local_laundry_service,
-                                size: 18,
-                              ),
+                             
                               label: Text(
-                                isDry ? 'เริ่มอบ' : 'เริ่มซัก',
-                                style: const TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.bold),
+                                'เริ่มคำนวณ',
+                                style:
+                                    const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight:
+                                      FontWeight.bold,
+                                ),
                               ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF0593FF),
-                                foregroundColor: Colors.white,
+                              style:
+                                  ElevatedButton.styleFrom(
+                                backgroundColor:
+                                    const Color(
+                                        0xFF0593FF),
+                                foregroundColor:
+                                    Colors.white,
                                 padding:
-                                    const EdgeInsets.symmetric(vertical: 13),
+                                    const EdgeInsets.symmetric(
+                                  vertical: 13,
+                                ),
                                 elevation: 0,
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12)),
+                                shape:
+                                    RoundedRectangleBorder(
+                                  borderRadius:
+                                      BorderRadius.circular(
+                                          12),
+                                ),
                               ),
                             ),
                           ),
@@ -563,19 +659,81 @@ class _OrderCard extends StatelessWidget {
     );
   }
 
-  Widget _iconRow(IconData icon, String text) {
+  Widget _iconRow(
+    IconData icon,
+    String text,
+  ) {
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment:
+          CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 15, color: Colors.grey.shade500),
+        Icon(
+          icon,
+          size: 15,
+          color: Colors.grey.shade500,
+        ),
         const SizedBox(width: 4),
         Expanded(
-          child: Text(text,
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey.shade600,
+            ),
+          ),
         ),
       ],
     );
   }
+
+  Widget _buildChip(
+    String label,
+    String value,
+    Color bg,
+    Color textColor, {
+    IconData? icon,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 6,
+      ),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(
+              icon,
+              size: 25,
+              color: Colors.blue.shade500,
+            ),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: textColor,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
   Widget _buildChip(String label, String value, Color bg, Color textColor,
       {IconData? icon}) {
@@ -603,4 +761,3 @@ class _OrderCard extends StatelessWidget {
       ),
     );
   }
-}

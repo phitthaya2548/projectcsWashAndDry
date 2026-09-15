@@ -36,13 +36,13 @@ class _AppBarRiderState extends State<AppBarRider> {
   }
 
   Future<void> _init() async {
-    // 1. อ่านจาก session ก่อน โชว์ทันทีไม่ต้องรอ API
+ 
     final cachedStatus = await Session().getStatus();
     if (cachedStatus != null && cachedStatus.isNotEmpty) {
       _sharedRiderStatus.value = cachedStatus;
     }
 
-    // 2. ค่อย sync กับ server เบื้องหลัง
+
     try {
       final config = await Configuration.getConfig();
       url = config['apiEndpoint']?.toString() ?? '';
@@ -65,7 +65,7 @@ class _AppBarRiderState extends State<AppBarRider> {
       }
     } catch (e) {
       log('fetch error: $e');
-      // ไม่ reset เป็น null เพื่อไม่ให้ UI ค้าง "กำลังโหลด..." — ปล่อยค่าจาก session ที่โชว์อยู่ไว้
+ 
     }
   }
 

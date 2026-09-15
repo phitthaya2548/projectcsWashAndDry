@@ -37,13 +37,12 @@ class _AppBarStaffState extends State<AppBarStaff> {
   }
 
   Future<void> _init() async {
-    // 1. อ่านจาก session ก่อน โชว์ทันทีไม่ต้องรอ API
     final cachedStatus = await Session().getStatus();
     if (cachedStatus != null && cachedStatus.isNotEmpty) {
       sharedStaffStatus.value = cachedStatus;
     }
 
-    // 2. ค่อย sync กับ server เบื้องหลัง
+
     try {
       final config = await Configuration.getConfig();
       url = config['apiEndpoint']?.toString() ?? '';
@@ -66,7 +65,7 @@ class _AppBarStaffState extends State<AppBarStaff> {
       }
     } catch (e) {
       log('fetch error: $e');
-      // ไม่ reset เป็น null เพื่อไม่ให้ UI ค้าง "กำลังโหลด..." — ปล่อยค่าจาก session ที่โชว์อยู่ไว้
+
     }
   }
 
@@ -74,7 +73,7 @@ class _AppBarStaffState extends State<AppBarStaff> {
     if (url.isEmpty) return;
 
     final previousStatus = sharedStaffStatus.value;
-    sharedStaffStatus.value = newStatus; // optimistic update ให้ UI ตอบสนองทันที
+    sharedStaffStatus.value = newStatus; 
 
     try {
       final res = await http.put(

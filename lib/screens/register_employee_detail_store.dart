@@ -1,95 +1,140 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 import 'package:wash_and_dry/config/config.dart';
+import 'package:wash_and_dry/models/res/customer/store/res_detail_store.dart';
 import 'package:wash_and_dry/models/res/customer/store/res_list_register_employee_store.dart';
 import 'package:wash_and_dry/service/session_service.dart';
 
 class StoreDetailEmployeeScreen extends StatefulWidget {
-  final StoreListItem store;
+  final String storeId;
 
-  const StoreDetailEmployeeScreen({super.key, required this.store});
+  const StoreDetailEmployeeScreen({super.key, required this.storeId});
 
   @override
   State<StoreDetailEmployeeScreen> createState() =>
       _StoreDetailEmployeeScreenState();
 }
 
-class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
-    with SingleTickerProviderStateMixin {
- 
+class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen> {
+  static const _kPrimary = Color(0xFF0EA5E9);
+  static const _kTextDark = Color(0xFF0D1B2A);
+  static const _kTextGray = Color(0xFF6B7280);
+  static const _kTextLight = Color(0xFFB0B7C3);
+  static const _kAmber = Color(0xFFFBBF24);
+  static const _kDivider = Color(0xFFF1F5F9);
+  static const _kDanger = Color(0xFFE53935);
+  static const _kDangerBg = Color(0xFFFFEBEB);
+  static const _kFacebook = Color(0xFF1877F2);
+  static const _kLine = Color(0xFF06C755);
+  static const _kBg = Color(0xFFF2F4F7);
+  static const _kGreen = Color(0xFF16A34A);
+  static const _kPurple = Color(0xFF7C3AED);
 
-  static const Color _primaryColor = Color(0xFF0593FF);
-  static const Color _primaryDarkColor = Color(0xFF0476D9);
-  static const Color _bgColor = Color(0xFFF5F7FA);
-  static const Color _successColor = Color(0xFF22C55E);
-  static const Color _dangerColor = Color(0xFFEF4444);
-  static const Color _starColor = Color(0xFFFFB800);
-  static const Color _mutedTextColor = Color(0xFF6B7280);
-  static const Color _chipBgColor = Color(0xFFF1F5F9);
-  static const Color _titleTextColor = Color(0xFF1A1A2E);
-  static const Color _lineColor = Color(0xFF06C755);
-  static const Color _facebookColor = Color(0xFF1877F2);
-
-  late final TabController _tabController;
-  final PageController _imageController = PageController();
+  final PageController _pageController = PageController();
   final Session _session = Session();
 
-  int _currentImage = 0;
-  bool _isApplying = false;
+  GoogleMapController? _mapController;
 
+  int _activeTab = 0;
+  int _currentImageIndex = 0;
+  int? _selectedRatingFilter;
+
+  bool _isApplying = false;
+  bool _loadingImages = true;
+  bool _loadingReviews = true;
+  bool _isLoading = true;
+
+  String? _sessionRole;
+  String? _errorMessage;
   String url = '';
 
+  StoreDetail? _store;
   List<StoreImageItem> _images = [];
-  bool _loadingImages = true;
-
   List<StoreReviewItem> _reviews = [];
-  bool _loadingReviews = true;
 
-  StoreListItem get store => widget.store;
+  double _avgRating = 0;
+  int _reviewCount = 0;
 
-  bool get _isOpen => store.status.toLowerCase() == 'เปิดร้าน';
+  StoreDetail get store => _store!;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-    _loadExtras();
+    _loadData();
   }
 
   @override
   void dispose() {
-    _tabController.dispose();
-    _imageController.dispose();
+    _pageController.dispose();
+    _mapController?.dispose();
     super.dispose();
   }
 
-
-  /// โหลดรูปและรีวิวแบบขนาน ไม่บล็อกกัน
-  Future<void> _loadExtras() async {
+  Future<void> _loadData() async {
     try {
-      final cfg = await Configuration.getConfig();
-      url = cfg['apiEndpoint']?.toString() ?? '';
-    } catch (_) {
-    }
+      final config = await Configuration.getConfig();
+      url = config['apiEndpoint']?.toString() ?? '';
+    } catch (_) {}
 
-    _fetchImages();
-    _fetchReviews();
-  }
-
-  Future<void> _fetchImages() async {
     if (url.isEmpty) {
-      if (mounted) setState(() => _loadingImages = false);
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _loadingImages = false;
+        _loadingReviews = false;
+        _errorMessage = 'ไม่สามารถโหลดการตั้งค่าได้';
+      });
       return;
     }
 
     try {
-      final uri = Uri.parse(
-        '$url/store/images/${store.storeId}',
+      _sessionRole = await _session.getRole();
+    } catch (_) {
+      _sessionRole = null;
+    }
+
+    await Future.wait([_fetchProfile(), _fetchImages(), _fetchReviews()]);
+  }
+
+  Future<void> _fetchProfile() async {
+    try {
+      final res = await GetConnect().get(
+        '$url/store/customer/profile/${widget.storeId}',
       );
+
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+
+        if (res.statusCode == 200 && res.body['ok'] == true) {
+          _store = StoreDetail.fromJson(res.body['data']);
+        } else {
+          _errorMessage = res.body['message']?.toString() ?? 'เกิดข้อผิดพลาด';
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _isLoading = false;
+        _errorMessage = 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้';
+      });
+    }
+  }
+
+  Future<void> _fetchImages() async {
+    try {
+      final uri = Uri.parse('$url/store/images/${widget.storeId}');
+
       final res = await http.get(uri);
 
       if (res.statusCode == 200) {
@@ -101,240 +146,374 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
               .map((e) => StoreImageItem.fromJson(e as Map<String, dynamic>))
               .toList();
 
-          if (mounted) setState(() => _images = images);
+          if (mounted) {
+            setState(() {
+              _images = images;
+            });
+          }
         }
       }
-    } catch (_) {
+    } catch (_) {}
 
+    if (mounted) {
+      setState(() {
+        _loadingImages = false;
+      });
     }
-
-    if (mounted) setState(() => _loadingImages = false);
   }
 
   Future<void> _fetchReviews() async {
-    if (url.isEmpty) {
-      if (mounted) setState(() => _loadingReviews = false);
-      return;
-    }
-
     try {
-      final uri = Uri.parse('$url/order/store/${store.storeId}/reviews');
+      final uri = Uri.parse('$url/order/store/${widget.storeId}/reviews');
+
       final res = await http.get(uri);
 
       if (res.statusCode == 200) {
         final json = jsonDecode(res.body) as Map<String, dynamic>;
         final data = json['data'] as Map<String, dynamic>? ?? {};
         final list = data['reviews'] as List<dynamic>? ?? [];
+
         final reviews = list
             .map((e) => StoreReviewItem.fromJson(e as Map<String, dynamic>))
             .toList();
 
-        if (mounted) setState(() => _reviews = reviews);
+        final avgRating = (data['avg_rating'] as num?)?.toDouble() ?? 0;
+        final reviewCount =
+            (data['review_count'] as num?)?.toInt() ?? reviews.length;
+
+        if (mounted) {
+          setState(() {
+            _reviews = reviews;
+            _avgRating = avgRating;
+            _reviewCount = reviewCount;
+          });
+        }
       }
-    } catch (_) {
+    } catch (_) {}
 
+    if (mounted) {
+      setState(() {
+        _loadingReviews = false;
+      });
     }
-
-    if (mounted) setState(() => _loadingReviews = false);
   }
 
+  void _retry() {
+    if (!mounted) return;
+
+    setState(() {
+      _activeTab = 0;
+      _currentImageIndex = 0;
+      _selectedRatingFilter = null;
+      _isLoading = true;
+      _loadingImages = true;
+      _loadingReviews = true;
+      _errorMessage = null;
+      _store = null;
+      _images = [];
+      _reviews = [];
+      _avgRating = 0;
+      _reviewCount = 0;
+    });
+
+    _loadData();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _bgColor,
-      appBar: _buildAppBar(),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: [
-                _buildImageCarousel(),
-                _buildHeaderCard(),
-                _buildTabBar(),
-                SizedBox(
-                  height: MediaQuery.of(context).size.height * 0.55,
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: [
-                      _buildInfoTab(),
-                      _buildReviewsTab(),
-                    ],
-                  ),
-                ),
-              ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
+      child: Scaffold(
+        backgroundColor: _kBg,
+        appBar: AppBar(
+          flexibleSpace: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFF0593FF), Color(0xFF0476D9)],
+              ),
             ),
           ),
-          _buildBottomActions(),
-        ],
-      ),
-    );
-  }
-
-  PreferredSizeWidget _buildAppBar() {
-    return AppBar(
-      leading: IconButton(
-        icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
-        onPressed: () => Get.back(),
-      ),
-      flexibleSpace: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [_primaryColor, _primaryDarkColor],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+          elevation: 0,
+          centerTitle: true,
+          leading: IconButton(
+            onPressed: Get.back,
+            icon: const Icon(Icons.arrow_back_ios),
           ),
+          title: const Text(
+            'รายละเอียดร้านค้า',
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 17,
+              color: Colors.white,
+            ),
+          ),
+          iconTheme: const IconThemeData(color: Colors.white),
         ),
+        body: _isLoading
+            ? _loadingIndicator()
+            : _errorMessage != null || _store == null
+            ? _errorView()
+            : _body(),
+        bottomNavigationBar:
+            !_isLoading &&
+                _errorMessage == null &&
+                _store != null &&
+                (_sessionRole == 'rider' || _sessionRole == 'laundry_staff')
+            ? _buildBottomActions()
+            : null,
       ),
-      elevation: 0,
-      centerTitle: true,
-      title: const Text(
-        'รายละเอียดร้านค้า',
-        style: TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.bold,
-          fontSize: 18,
+    );
+  }
+
+  Widget _loadingIndicator() {
+    return const Center(
+      child: CircularProgressIndicator(color: _kPrimary, strokeWidth: 2.5),
+    );
+  }
+
+  Widget _errorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: _kDangerBg,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(
+                Icons.wifi_off_rounded,
+                size: 34,
+                color: _kDanger,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _errorMessage ?? 'ไม่พบข้อมูลร้านค้า',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 15, color: _kTextGray),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: _retry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('ลองใหม่'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _kPrimary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 28,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 0,
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
+  Widget _body() {
+    final images = _images.isNotEmpty
+        ? _images.map((e) => e.imagePath).toList()
+        : store.profileImage.isNotEmpty
+        ? [store.profileImage]
+        : <String>[];
 
+    return NestedScrollView(
+      headerSliverBuilder: (context, _) => [
+        SliverToBoxAdapter(child: _imageCarousel(images)),
+        SliverToBoxAdapter(child: _storeHeader()),
+        SliverToBoxAdapter(child: _tabBar()),
+      ],
+      body: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        child: SingleChildScrollView(
+          key: ValueKey(_activeTab),
+          padding: const EdgeInsets.only(bottom: 24),
+          child: _activeTab == 0 ? _infoTab() : _reviewTab(),
+        ),
+      ),
+    );
+  }
 
-  Widget _buildImageCarousel() {
-    // ระหว่างรอโหลดรูป โชว์ profileImage ไปก่อน (ถ้ามี) ไม่ต้องรอจอว่าง
-    if (_loadingImages) {
-      return SizedBox(
-        height: 240,
-        child: _buildNetworkOrFallback(store.profileImage),
-      );
-    }
-
-    final hasImages = _images.isNotEmpty;
-    final itemCount = hasImages ? _images.length : 1;
-
+  Widget _imageCarousel(List<String> images) {
     return SizedBox(
       height: 240,
       child: Stack(
+        fit: StackFit.expand,
         children: [
-          PageView.builder(
-            controller: _imageController,
-            itemCount: itemCount,
-            onPageChanged: (i) => setState(() => _currentImage = i),
-            itemBuilder: (context, i) {
-              final url = hasImages ? _images[i].imagePath : store.profileImage;
-              return _buildNetworkOrFallback(url);
-            },
-          ),
-          if (itemCount > 1) _buildImageCounter(itemCount),
-          if (itemCount > 1) _buildImageDots(itemCount),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildNetworkOrFallback(String url) {
-    if (url.isEmpty) return _imageFallback();
-    return Image.network(
-      url,
-      width: double.infinity,
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => _imageFallback(),
-    );
-  }
-
-  Widget _buildImageCounter(int itemCount) {
-    return Positioned(
-      top: 14,
-      right: 14,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.5),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          '${_currentImage + 1} / $itemCount',
-          style: const TextStyle(color: Colors.white, fontSize: 12),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildImageDots(int itemCount) {
-    return Positioned(
-      bottom: 12,
-      left: 0,
-      right: 0,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: List.generate(itemCount, (i) {
-          final active = i == _currentImage;
-          return AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            margin: const EdgeInsets.symmetric(horizontal: 3),
-            width: active ? 18 : 6,
-            height: 6,
-            decoration: BoxDecoration(
-              color: active ? Colors.white : Colors.white54,
-              borderRadius: BorderRadius.circular(4),
+          images.isNotEmpty
+              ? PageView.builder(
+                  controller: _pageController,
+                  itemCount: images.length,
+                  onPageChanged: (index) {
+                    setState(() {
+                      _currentImageIndex = index;
+                    });
+                  },
+                  itemBuilder: (_, index) {
+                    return _networkImage(images[index]);
+                  },
+                )
+              : _imagePlaceholder(),
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              height: 80,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Colors.black.withOpacity(0.5)],
+                ),
+              ),
             ),
-          );
-        }),
-      ),
-    );
-  }
-
-  Widget _imageFallback() {
-    return Container(
-      color: Colors.blue[50],
-      alignment: Alignment.center,
-      child: Icon(Icons.store_rounded, size: 64, color: Colors.blue[200]),
-    );
-  }
-
-  // ---------------- Header card ----------------
-
-  Widget _buildHeaderCard() {
-    final rating = store.avgRating.clamp(0, 5).toDouble();
-
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 15,
-            offset: const Offset(0, 4),
           ),
+          if (images.length > 1) ...[
+            Positioned(
+              bottom: 14,
+              left: 0,
+              right: 0,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(
+                  images.length,
+                  (index) => AnimatedContainer(
+                    duration: const Duration(milliseconds: 280),
+                    margin: const EdgeInsets.symmetric(horizontal: 3),
+                    width: _currentImageIndex == index ? 22 : 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: _currentImageIndex == index
+                          ? Colors.white
+                          : Colors.white.withOpacity(0.45),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 64,
+              right: 14,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.4),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '${_currentImageIndex + 1} / ${images.length}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _networkImage(String imageUrl) {
+    if (imageUrl.isEmpty) {
+      return _imagePlaceholder();
+    }
+
+    return Image.network(
+      imageUrl,
+      fit: BoxFit.cover,
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) {
+          return child;
+        }
+
+        return Container(
+          color: const Color(0xFFCFD8DC),
+          child: const Center(
+            child: CircularProgressIndicator(color: _kPrimary, strokeWidth: 2),
+          ),
+        );
+      },
+      errorBuilder: (context, error, stackTrace) {
+        return _imagePlaceholder();
+      },
+    );
+  }
+
+  Widget _imagePlaceholder() {
+    return Container(
+      color: const Color(0xFFCFD8DC),
+      child: const Center(
+        child: Icon(
+          Icons.store_mall_directory_rounded,
+          size: 72,
+          color: Colors.white54,
+        ),
+      ),
+    );
+  }
+
+  Widget _storeHeader() {
+    final rating = _avgRating;
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: Text(
                   store.storeName.isNotEmpty ? store.storeName : '-',
                   style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: _kTextDark,
+                    height: 1.2,
                   ),
                 ),
               ),
-              const Icon(Icons.star_rounded, size: 18, color: _starColor),
-              const SizedBox(width: 2),
-              Text(
-                rating.toStringAsFixed(1),
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
+              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.star_rounded,
+                      color: Colors.amber,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      rating.toStringAsFixed(1),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                        color: Color(0xFF92400E),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -342,22 +521,16 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,
-            runSpacing: 8,
+            runSpacing: 6,
             children: [
-              _chip(
-                icon: Icons.circle,
-                iconSize: 8,
-                iconColor: _isOpen ? _successColor : _dangerColor,
-                label: _isOpen ? 'เปิดร้าน' : 'ปิดชั่วคราว',
-              ),
               _chip(
                 icon: Icons.access_time_rounded,
                 label: store.openingHours.isNotEmpty
-                    ? '${store.openingHours} - ${store.closedHours}'
+                    ? '${store.openingHours} – ${store.closedHours}'
                     : '-',
               ),
               _chip(
-                icon: Icons.local_shipping_outlined,
+                icon: Icons.local_shipping_rounded,
                 label: '${store.serviceRadius.toStringAsFixed(1)} กม.',
               ),
             ],
@@ -370,260 +543,603 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
   Widget _chip({
     required IconData icon,
     required String label,
-    double iconSize = 14,
-    Color iconColor = _mutedTextColor,
+    double iconSize = 13,
+    Color textColor = _kTextGray,
+    Color bgColor = const Color(0xFFF3F4F6),
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
-        color: _chipBgColor,
+        color: bgColor,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: iconSize, color: iconColor),
-          const SizedBox(width: 4),
+          Icon(icon, size: iconSize, color: textColor),
+          const SizedBox(width: 5),
           Text(
             label,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ---------------- Tabs ----------------
-
-  Widget _buildTabBar() {
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: TabBar(
-        controller: _tabController,
-        labelColor: _primaryColor,
-        unselectedLabelColor: Colors.grey[500],
-        indicatorColor: _primaryColor,
-        labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-        tabs: const [
-          Tab(text: 'ข้อมูลร้าน'),
-          Tab(text: 'รีวิว'),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildInfoTab() {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
-      children: [
-        _sectionTitle('ตำแหน่งร้าน'),
-        const SizedBox(height: 8),
-        _buildMap(),
-        const SizedBox(height: 18),
-        _sectionTitle('ข้อมูลติดต่อ'),
-        const SizedBox(height: 8),
-        _contactRow(Icons.location_on_outlined, store.address),
-        _contactRow(Icons.phone_outlined, store.phone),
-        _contactRow(Icons.email_outlined, store.email, isLink: true),
-        _contactRow(Icons.facebook, store.facebook, iconColor: _facebookColor),
-        _contactRow(
-          Icons.chat_bubble_outline,
-          store.lineId,
-          customIcon: const FaIcon(
-            FontAwesomeIcons.line,
-            size: 18,
-            color: _lineColor,
-          ),
-        ),
-        const SizedBox(height: 18),
-        _sectionTitle('เกี่ยวกับร้าน'),
-        const SizedBox(height: 8),
-        _contactRow(
-          Icons.social_distance_outlined,
-          'รับส่งสูงสุด ${store.serviceRadius.toStringAsFixed(1)} กม.',
-        ),
-      ],
-    );
-  }
-
-  Widget _sectionTitle(String text) {
-    return Text(
-      text,
-      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-    );
-  }
-
-  Widget _contactRow(
-    IconData icon,
-    String text, {
-    bool isLink = false,
-    Widget? customIcon,
-    Color iconColor = _primaryColor,
-  }) {
-    final display = text.isNotEmpty ? text : '-';
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 18,
-            child: customIcon ?? Icon(icon, size: 18, color: iconColor),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              display,
-              style: TextStyle(
-                fontSize: 13,
-                color: isLink ? _primaryColor : Colors.black87,
-                decoration: isLink ? TextDecoration.underline : null,
-              ),
+            style: TextStyle(
+              color: textColor,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _tabBar() {
+    return Container(
+      color: Colors.white,
+      child: Row(
+        children: ['ข้อมูลร้าน', 'รีวิว'].asMap().entries.map((entry) {
+          final isActive = _activeTab == entry.key;
+
+          return Expanded(
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  _activeTab = entry.key;
+                  _selectedRatingFilter = null;
+                });
+              },
+              behavior: HitTestBehavior.opaque,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(
+                      color: isActive ? _kPrimary : Colors.transparent,
+                      width: 2.5,
+                    ),
+                  ),
+                ),
+                child: Text(
+                  entry.value,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: isActive ? _kPrimary : _kTextGray,
+                    fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _infoTab() {
+    final currency = NumberFormat.currency(
+      locale: 'th_TH',
+      symbol: '฿',
+      decimalDigits: 0,
+    );
+
+    return Column(
+      children: [
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'ตำแหน่งร้าน',
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                  color: _kTextDark,
+                ),
+              ),
+              const SizedBox(height: 10),
+              _buildMap(),
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        _infoSection('ข้อมูลติดต่อ', [
+          _infoRow(icon: Icons.location_on_rounded, text: store.address),
+          _infoRow(icon: Icons.phone_rounded, text: store.phone),
+          _infoRow(icon: Icons.email_rounded, text: store.email, isLink: true),
+          _infoRow(
+            icon: Icons.facebook_rounded,
+            text: store.facebook,
+            iconColor: _kFacebook,
+          ),
+          _infoRow(
+            icon: Icons.chat_bubble_rounded,
+            text: store.lineId,
+            customIcon: const FaIcon(
+              FontAwesomeIcons.line,
+              color: _kLine,
+              size: 20,
+            ),
+            iconColor: _kLine,
+            isLast: true,
+          ),
+        ]),
+        const SizedBox(height: 6),
+        _infoSection('เกี่ยวกับร้าน', [
+          _infoRow(
+            icon: Icons.my_location_rounded,
+            customIcon: const FaIcon(
+              FontAwesomeIcons.locationCrosshairs,
+              color: _kPrimary,
+              size: 18,
+            ),
+            iconColor: _kPrimary,
+            text: 'รับส่งสูงสุด ${store.serviceRadius.toStringAsFixed(0)} กม.',
+          ),
+          _infoRow(
+            icon: Icons.local_laundry_service_rounded,
+            iconColor: _kPrimary,
+            text: 'เครื่องซัก ${store.machineWashCount} เครื่อง',
+          ),
+          _infoRow(
+            icon: Icons.local_laundry_service_rounded,
+            iconColor: _kPrimary,
+            text: 'เครื่องอบ ${store.machineDryCount} เครื่อง',
+          ),
+          _infoRow(
+  icon: Icons.local_laundry_service_rounded, // ไม่ถูกใช้เพราะมี customIcon
+  customIcon: const FaIcon(
+    FontAwesomeIcons.bottleDroplet,
+    color: _kPrimary,
+    size: 18,
+  ),
+  iconColor: _kPrimary,
+  text: 'ราคาน้ำยาซัก ${currency.format(store.detergentprice)}',
+  isLast: true,
+),
+        ]),
+      ],
     );
   }
 
   Widget _buildMap() {
     if (store.latitude == 0 && store.longitude == 0) {
-      return const _MapPlaceholder();
+      return Container(
+        height: 180,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        alignment: Alignment.center,
+        child: const Icon(Icons.map_outlined, size: 42, color: _kTextLight),
+      );
     }
+
     return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(12),
       child: SizedBox(
-        height: 160,
+        height: 180,
         child: GoogleMap(
           initialCameraPosition: CameraPosition(
             target: LatLng(store.latitude, store.longitude),
             zoom: 15,
           ),
+          onMapCreated: (controller) {
+            _mapController = controller;
+          },
           markers: {
             Marker(
-              markerId: MarkerId(store.storeId),
+              markerId: MarkerId(widget.storeId),
               position: LatLng(store.latitude, store.longitude),
+              infoWindow: InfoWindow(title: store.storeName),
             ),
           },
-          zoomControlsEnabled: false,
           myLocationButtonEnabled: false,
-          liteModeEnabled: true,
+          zoomControlsEnabled: false,
+          compassEnabled: false,
+          mapToolbarEnabled: false,
+          gestureRecognizers: {
+            Factory<OneSequenceGestureRecognizer>(
+              () => EagerGestureRecognizer(),
+            ),
+          },
         ),
       ),
     );
   }
 
-  // ---------------- Reviews tab ----------------
+  Widget _infoSection(String title, List<Widget> items) {
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 14,
+              color: _kTextDark,
+            ),
+          ),
+          const SizedBox(height: 12),
+          ...items,
+        ],
+      ),
+    );
+  }
 
-  Widget _buildReviewsTab() {
+  Widget _infoRow({
+    required IconData icon,
+    required String text,
+    Color iconColor = _kPrimary,
+    bool isLink = false,
+    bool isLast = false,
+    Widget? customIcon,
+  }) {
+    final display = text.isNotEmpty ? text : '-';
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: isLast ? 8 : 14),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: iconColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Center(
+              child: customIcon ?? Icon(icon, color: iconColor, size: 19),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              display,
+              style: TextStyle(
+                fontSize: 13.5,
+                color: isLink ? iconColor : _kTextDark,
+                decoration: isLink ? TextDecoration.underline : null,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<StoreReviewItem> _filteredReviews() {
+    if (_selectedRatingFilter == null) {
+      return _reviews;
+    }
+
+    return _reviews
+        .where((review) => review.rating.round() == _selectedRatingFilter)
+        .toList();
+  }
+
+  void _toggleRatingFilter(int star) {
+    setState(() {
+      _selectedRatingFilter = _selectedRatingFilter == star ? null : star;
+    });
+  }
+
+  Widget _reviewTab() {
     if (_loadingReviews) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.symmetric(vertical: 60),
-          child: CircularProgressIndicator(color: _primaryColor),
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 64),
+        child: Center(
+          child: CircularProgressIndicator(color: _kPrimary, strokeWidth: 2.5),
         ),
       );
     }
 
     if (_reviews.isEmpty) {
-      return ListView(
-        padding: const EdgeInsets.symmetric(vertical: 40),
-        children: [
-          Icon(Icons.rate_review_outlined, size: 48, color: Colors.grey[300]),
-          const SizedBox(height: 10),
-          Center(
-            child: Text(
-              'ยังไม่มีรีวิว',
-              style: TextStyle(color: Colors.grey[600], fontSize: 14),
-            ),
-          ),
-        ],
-      );
+      return _reviewEmptyView();
     }
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+    final filtered = _filteredReviews();
+
+    return Column(
       children: [
-        _buildReviewSummaryCard(),
+        _reviewSummaryCard(),
+        if (_selectedRatingFilter != null) _activeFilterBar(),
+        const SizedBox(height: 6),
+        if (filtered.isEmpty)
+          _reviewEmptyView(filteredByRating: true)
+        else
+          ...filtered.map(_reviewCard),
         const SizedBox(height: 12),
-        ..._reviews.map(
-          (r) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _buildReviewCard(r),
-          ),
-        ),
       ],
     );
   }
 
-  Widget _buildReviewSummaryCard() {
-    final rating = store.avgRating.clamp(0, 5).toDouble();
-    final total = store.totalReviews > 0 ? store.totalReviews : _reviews.length;
-
-    final counts = List<int>.filled(5, 0);
-    for (final r in _reviews) {
-      final star = r.rating.round().clamp(1, 5);
-      counts[star - 1]++;
-    }
-
+  Widget _activeFilterBar() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: _kAmber.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.star_rounded, size: 15, color: _kAmber),
+                const SizedBox(width: 4),
+                Text(
+                  '$_selectedRatingFilter ดาว',
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF92400E),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _selectedRatingFilter = null;
+              });
+            },
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.close_rounded, size: 15, color: _kTextGray),
+                SizedBox(width: 2),
+                Text(
+                  'ล้างตัวกรอง',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: _kTextGray,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _reviewEmptyView({bool filteredByRating = false}) {
+    return Container(
+      color: Colors.white,
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+      child: Column(
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: const Color(0xFFE8F1FC),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Icon(
+              filteredByRating
+                  ? Icons.filter_alt_off_rounded
+                  : Icons.rate_review_rounded,
+              size: 34,
+              color: _kPrimary,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            filteredByRating
+                ? 'ไม่มีรีวิว $_selectedRatingFilter ดาว'
+                : 'ยังไม่มีรีวิว',
+            style: const TextStyle(
+              color: _kTextGray,
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            filteredByRating
+                ? 'ลองเลือกจำนวนดาวอื่น'
+                : 'ยังไม่มีผู้ใช้รีวิวร้านนี้',
+            style: const TextStyle(color: _kTextLight, fontSize: 13),
+          ),
+          if (filteredByRating) ...[
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _selectedRatingFilter = null;
+                });
+              },
+              child: const Text(
+                'ดูรีวิวทั้งหมด',
+                style: TextStyle(
+                  color: _kPrimary,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13.5,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _starRow(num rating, {double size = 14, double spacing = 1.5}) {
+    final filledCount = rating.round();
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(5, (index) {
+        final filled = index < filledCount;
+
+        return Padding(
+          padding: EdgeInsets.symmetric(horizontal: spacing),
+          child: Icon(
+            filled ? Icons.star_rounded : Icons.star_border_rounded,
+            color: _kAmber,
+            size: size,
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _reviewSummaryCard() {
+    final rating = _avgRating;
+    final total = _reviewCount;
+    final distribution = _ratingDistribution();
+
+    final maxCount = distribution.values.isEmpty
+        ? 0
+        : distribution.values.reduce((a, b) => a > b ? a : b);
+
+    return Container(
+      color: Colors.white,
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Column(
-            children: [
-              Text(
-                rating.toStringAsFixed(1),
-                style: const TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: _titleTextColor,
+          GestureDetector(
+            onTap: () {
+              setState(() {
+                _selectedRatingFilter = null;
+              });
+            },
+            behavior: HitTestBehavior.opaque,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  rating.toStringAsFixed(1),
+                  style: const TextStyle(
+                    fontSize: 42,
+                    fontWeight: FontWeight.w800,
+                    color: _kTextDark,
+                    height: 1,
+                  ),
                 ),
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: List.generate(5, (i) {
-                  return Icon(
-                    i < rating.round()
-                        ? Icons.star_rounded
-                        : Icons.star_border_rounded,
-                    size: 14,
-                    color: _starColor,
-                  );
-                }),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                '$total รีวิว',
-                style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-              ),
-            ],
+                const SizedBox(height: 8),
+                _starRow(rating, size: 18),
+                const SizedBox(height: 6),
+                Text(
+                  '$total รีวิว',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _selectedRatingFilter == null
+                        ? _kPrimary
+                        : _kTextGray,
+                    fontWeight: _selectedRatingFilter == null
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                    decoration: _selectedRatingFilter == null
+                        ? TextDecoration.underline
+                        : null,
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(width: 18),
+          const SizedBox(width: 24),
           Expanded(
             child: Column(
-              children: List.generate(5, (i) {
-                final star = 5 - i;
-                final count = counts[star - 1];
-                final ratio = total > 0 ? count / total : 0.0;
-                return _buildRatingBar(star, count, ratio);
+              children: List.generate(5, (index) {
+                final star = 5 - index;
+                final count = distribution[star] ?? 0;
+                final ratio = maxCount > 0 ? count / maxCount : 0.0;
+                final isSelected = _selectedRatingFilter == star;
+
+                return GestureDetector(
+                  onTap: count == 0
+                      ? null
+                      : () {
+                          _toggleRatingFilter(star);
+                        },
+                  behavior: HitTestBehavior.opaque,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    margin: const EdgeInsets.symmetric(vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? _kAmber.withOpacity(0.12)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      children: [
+                        Text(
+                          '$star',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: isSelected
+                                ? FontWeight.w800
+                                : FontWeight.w600,
+                            color: isSelected
+                                ? const Color(0xFF92400E)
+                                : _kTextGray,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(
+                          Icons.star_rounded,
+                          size: 12,
+                          color: _kAmber,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(4),
+                            child: LinearProgressIndicator(
+                              value: ratio,
+                              minHeight: 6,
+                              backgroundColor: _kDivider,
+                              valueColor: const AlwaysStoppedAnimation<Color>(
+                                _kAmber,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 16,
+                          child: Text(
+                            '$count',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isSelected
+                                  ? const Color(0xFF92400E)
+                                  : _kTextGray,
+                              fontWeight: isSelected
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
               }),
             ),
           ),
@@ -632,124 +1148,106 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
     );
   }
 
-  Widget _buildRatingBar(int star, int count, double ratio) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        children: [
-          Text('$star', style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-          const SizedBox(width: 4),
-          const Icon(Icons.star_rounded, size: 11, color: _starColor),
-          const SizedBox(width: 6),
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: ratio,
-                minHeight: 6,
-                backgroundColor: _chipBgColor,
-                valueColor: const AlwaysStoppedAnimation<Color>(_starColor),
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          SizedBox(
-            width: 18,
-            child: Text(
-              '$count',
-              style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-            ),
-          ),
-        ],
-      ),
-    );
+  Map<int, int> _ratingDistribution() {
+    final counts = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0};
+
+    for (final review in _reviews) {
+      final rating = review.rating.round();
+
+      if (rating >= 1 && rating <= 5) {
+        counts[rating] = (counts[rating] ?? 0) + 1;
+      }
+    }
+
+    return counts;
   }
 
-  Widget _buildReviewCard(StoreReviewItem r) {
+  Widget _reviewCard(StoreReviewItem review) {
+    final dateStr = review.reviewedAt != null
+        ? DateFormat('d MMM yyyy', 'th').format(review.reviewedAt!)
+        : '';
+
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               CircleAvatar(
-                radius: 17,
-                backgroundColor: const Color(0xFFE6F4FF),
-                backgroundImage: r.reviewerImage.isNotEmpty
-                    ? NetworkImage(r.reviewerImage)
+                radius: 20,
+                backgroundColor: const Color(0xFFE3F4FC),
+                backgroundImage: review.reviewerImage.isNotEmpty
+                    ? NetworkImage(review.reviewerImage)
                     : null,
-                child: r.reviewerImage.isEmpty
-                    ? const Icon(Icons.person_rounded,
-                        size: 18, color: _primaryColor)
+                child: review.reviewerImage.isEmpty
+                    ? const Icon(
+                        Icons.person_rounded,
+                        color: _kPrimary,
+                        size: 20,
+                      )
                     : null,
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      r.reviewerName.isNotEmpty
-                          ? r.reviewerName
+                      review.reviewerName.isNotEmpty
+                          ? review.reviewerName
                           : 'ผู้ใช้ไม่ระบุชื่อ',
                       style: const TextStyle(
-                        fontSize: 13,
                         fontWeight: FontWeight.w700,
-                        color: _titleTextColor,
+                        fontSize: 14,
+                        color: _kTextDark,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                     ),
+                    const SizedBox(height: 3),
                     Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: List.generate(5, (j) {
-                        return Icon(
-                          j < r.rating.round()
-                              ? Icons.star_rounded
-                              : Icons.star_border_rounded,
-                          size: 13,
-                          color: _starColor,
-                        );
-                      }),
+                      children: [
+                        _starRow(review.rating, size: 14, spacing: 0),
+                        if (dateStr.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Text(
+                            dateStr,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: _kTextLight,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                   ],
                 ),
               ),
-              if (r.reviewedAt != null)
-                Text(
-                  '${r.reviewedAt!.day}/${r.reviewedAt!.month}/${r.reviewedAt!.year}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                ),
             ],
           ),
-          if (r.comment.isNotEmpty) ...[
+          if (review.comment.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(
-              r.comment,
-              style: const TextStyle(fontSize: 13, color: Colors.black87),
+              review.comment,
+              style: const TextStyle(
+                fontSize: 13.5,
+                color: Color(0xFF3D4A5C),
+                height: 1.4,
+              ),
             ),
           ],
+          const Padding(
+            padding: EdgeInsets.only(top: 14),
+            child: Divider(height: 1, color: _kDivider),
+          ),
         ],
       ),
     );
   }
 
-  // ---------------- Bottom actions ----------------
-
   Widget _buildBottomActions() {
+    final isRider = _sessionRole == 'rider';
+
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
       decoration: BoxDecoration(
@@ -764,58 +1262,53 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
       ),
       child: SafeArea(
         top: false,
-        child: Row(
-          children: [
-            Expanded(
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  side: const BorderSide(color: _primaryColor),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+        child: SizedBox(
+          width: double.infinity,
+          child: isRider
+              ? OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    side: const BorderSide(color: _kPrimary),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                   ),
-                ),
-                onPressed:
-                    _isApplying ? null : () => _applyAsEmployee(role: 'rider'),
-                icon: const Icon(Icons.two_wheeler_rounded, color: _primaryColor),
-                label: _isApplying
-                    ? _buttonSpinner(_primaryColor)
-                    : const Text(
-                        'สมัครพนักงานไรเดอร์',
-                        style: TextStyle(
-                          color: _primaryColor,
-                          fontWeight: FontWeight.w700,
+                  onPressed: _isApplying
+                      ? null
+                      : () => _applyAsEmployee(role: 'rider'),
+                  label: _isApplying
+                      ? _buttonSpinner(_kPrimary)
+                      : const Text(
+                          'สมัครพนักงานไรเดอร์',
+                          style: TextStyle(
+                            color: _kPrimary,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: _primaryColor,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
+                )
+              : ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _kPrimary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
                   ),
-                ),
-                onPressed: _isApplying
-                    ? null
-                    : () => _applyAsEmployee(role: 'laundry'),
-                icon: const Icon(Icons.local_laundry_service_rounded,
-                    color: Colors.white),
-                label: _isApplying
-                    ? _buttonSpinner(Colors.white)
-                    : const Text(
-                        'สมัครพนักงานซักอบ',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
+                  onPressed: _isApplying
+                      ? null
+                      : () => _applyAsEmployee(role: 'laundry'),
+                  label: _isApplying
+                      ? _buttonSpinner(Colors.white)
+                      : const Text(
+                          'สมัครพนักงานซักอบ',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-              ),
-            ),
-          ],
+                ),
         ),
       ),
     );
@@ -829,10 +1322,9 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
     );
   }
 
-  // ---------------- Apply as employee ----------------
-
   Future<void> _applyAsEmployee({required String role}) async {
     final sessionRole = await _session.getRole();
+
     final expectedSessionRole = role == 'rider' ? 'rider' : 'laundry_staff';
 
     if (sessionRole == null ||
@@ -840,7 +1332,7 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
         sessionRole != expectedSessionRole) {
       _showSnack(
         title: 'แจ้งเตือน',
-        message: (sessionRole == null || sessionRole.isEmpty)
+        message: sessionRole == null || sessionRole.isEmpty
             ? 'กรุณาเข้าสู่ระบบก่อนสมัคร'
             : 'บัญชีนี้ไม่สามารถสมัครเป็น${role == 'rider' ? 'ไรเดอร์' : 'พนักงานซักอบ'}ได้',
         type: _SnackType.warning,
@@ -862,13 +1354,13 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
     }
 
     String apiUrl = url;
+
     if (apiUrl.isEmpty) {
       try {
         final config = await Configuration.getConfig();
+
         apiUrl = config['apiEndpoint']?.toString() ?? '';
-      } catch (_) {
-        // เดี๋ยว apiUrl.isEmpty ด้านล่างจะจัดการต่อ
-      }
+      } catch (_) {}
     }
 
     if (apiUrl.isEmpty) {
@@ -884,22 +1376,28 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
         ? '$apiUrl/employee_regis_store/rider/store/$userId'
         : '$apiUrl/employee_regis_store/staff/store/$userId';
 
-    setState(() => _isApplying = true);
+    setState(() {
+      _isApplying = true;
+    });
 
     try {
-      final res = await GetConnect().put(endpoint, {'store_id': store.storeId});
+      final res = await GetConnect().put(endpoint, {
+        'store_id': widget.storeId,
+      });
 
       if (res.statusCode == 200 && res.body['ok'] == true) {
         _showSnack(
           title: 'สำเร็จ',
-          message: res.body['message']?.toString() ??
+          message:
+              res.body['message']?.toString() ??
               'ส่งคำขอสำเร็จ กรุณารอร้านค้ายืนยัน',
           type: _SnackType.success,
         );
       } else {
         _showSnack(
           title: 'ไม่สำเร็จ',
-          message: res.body['message']?.toString() ?? 'เกิดข้อผิดพลาด กรุณาลองใหม่',
+          message:
+              res.body['message']?.toString() ?? 'เกิดข้อผิดพลาด กรุณาลองใหม่',
           type: _SnackType.error,
         );
       }
@@ -910,7 +1408,11 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
         type: _SnackType.error,
       );
     } finally {
-      if (mounted) setState(() => _isApplying = false);
+      if (mounted) {
+        setState(() {
+          _isApplying = false;
+        });
+      }
     }
   }
 
@@ -920,9 +1422,18 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
     required _SnackType type,
   }) {
     final colors = switch (type) {
-      _SnackType.success => (bg: const Color(0xFFE8FFF0), text: const Color(0xFF1DB954)),
-      _SnackType.warning => (bg: const Color(0xFFFFF7E6), text: const Color(0xFF92400E)),
-      _SnackType.error => (bg: const Color(0xFFFFEBEB), text: const Color(0xFFE53935)),
+      _SnackType.success => (
+        bg: const Color(0xFFE8FFF0),
+        text: const Color(0xFF1DB954),
+      ),
+      _SnackType.warning => (
+        bg: const Color(0xFFFFF7E6),
+        text: const Color(0xFF92400E),
+      ),
+      _SnackType.error => (
+        bg: const Color(0xFFFFEBEB),
+        text: const Color(0xFFE53935),
+      ),
     };
 
     Get.snackbar(
@@ -936,21 +1447,3 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen>
 }
 
 enum _SnackType { success, warning, error }
-
-class _MapPlaceholder extends StatelessWidget {
-  const _MapPlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        height: 160,
-        width: double.infinity,
-        color: Colors.grey[200],
-        alignment: Alignment.center,
-        child: Icon(Icons.map_outlined, size: 40, color: Colors.grey[400]),
-      ),
-    );
-  }
-}

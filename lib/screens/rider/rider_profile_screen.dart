@@ -304,9 +304,7 @@ class _RiderProfileScreenState extends State<RiderProfileScreen> {
                       ),
                     ),
                   ),
-                  _buildCircleBtn(Icons.notifications_none_rounded, () {
-                    
-                  }),
+                  
                 ],
               ),
             ),

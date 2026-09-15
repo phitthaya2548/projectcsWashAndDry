@@ -26,7 +26,7 @@ class AppliedStoreData {
   final String phone;
   final String address;
   final String profileImage;
-  final String? status; // pending / TEMP_CLOSED / null
+  final String? status;
 
   AppliedStoreData({
     required this.storeId,
@@ -55,6 +55,8 @@ class AppliedStoreData {
         return 'รอการยืนยัน';
       case 'TEMP_CLOSED':
         return 'ยืนยันแล้ว';
+      case 'ONLINE':
+        return 'ใช้งาน';
       default:
         return 'ไม่ทราบสถานะ';
     }

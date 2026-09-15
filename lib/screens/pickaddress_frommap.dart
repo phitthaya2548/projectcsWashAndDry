@@ -74,12 +74,11 @@ class _MapPickerState extends State<MapPicker> {
   }
 
   void _setDefaultLocation() async {
-    selected = const LatLng(13.736717, 100.523186); // BKK
+    selected = const LatLng(13.736717, 100.523186);
     await _updateAddress(selected!);
     setState(() => isLoadingLocation = false);
   }
 
-  // ================== REVERSE GEOCODE ==================
 
   Future<void> _updateAddress(LatLng pos) async {
     setState(() => isLoadingAddress = true);
@@ -109,7 +108,7 @@ class _MapPickerState extends State<MapPicker> {
     }
   }
 
-  // ================== SEARCH ==================
+
 
   Future<void> searchLocation(String query) async {
     if (query.trim().isEmpty) return;

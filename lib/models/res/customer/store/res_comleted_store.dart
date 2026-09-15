@@ -66,6 +66,7 @@ class StoreCompletedOrder {
   final String? addressId;
   final String? machineWasherId;
   final String? machineDryerId;
+  final num detergentPrice;
   final String customerFullname;
   final String customerPhone;
   final String addressFull;
@@ -84,6 +85,7 @@ class StoreCompletedOrder {
     required this.washDryWeight,
     required this.note,
     required this.beforeWashImage,
+    required this.detergentPrice,
     required this.afterWashImage,
     required this.orderDatetime,
     required this.storeId,
@@ -109,7 +111,9 @@ class StoreCompletedOrder {
         totalAmount: j['total_amount'] as num? ?? 0,
         washDryWeight: j['wash_dry_weight'] as num?,
         note: j['note'] as String?,
+
         beforeWashImage: j['before_wash_image'] as String?,
+        detergentPrice: j['detergent_price'] as num? ?? 0,
         afterWashImage: j['after_wash_image'] as String?,
         orderDatetime: j['order_datetime'] as Map<String, dynamic>?,
         storeId: j['store_id'] as String?,

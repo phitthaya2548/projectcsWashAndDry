@@ -6,12 +6,13 @@ import 'package:get/get_navigation/src/extension_navigation.dart';
 import 'package:http/http.dart' as http;
 import 'package:wash_and_dry/config/config.dart';
 import 'package:wash_and_dry/models/res/customer/store/res_review_store.dart';
+import 'package:wash_and_dry/service/session_service.dart';
 
 
 class StoreReviewScreen extends StatefulWidget {
-  final String storeId;
 
-  const StoreReviewScreen({super.key, required this.storeId});
+
+  const StoreReviewScreen({super.key});
 
   @override
   State<StoreReviewScreen> createState() => _StoreReviewScreenState();
@@ -21,7 +22,7 @@ class _StoreReviewScreenState extends State<StoreReviewScreen> {
   String url = '';
   bool isLoading = true;
   String? errorMessage;
-
+  String? storeId;
   StoreReviewsResponse? data;
 
   int? _selectedRating;
@@ -45,6 +46,8 @@ class _StoreReviewScreenState extends State<StoreReviewScreen> {
     });
 
     try {
+      final session = Session();
+      final storeId = await session.getStoreId();
       final config = await Configuration.getConfig();
       url = config['apiEndpoint']?.toString() ?? '';
 
@@ -52,7 +55,7 @@ class _StoreReviewScreenState extends State<StoreReviewScreen> {
         throw Exception('ไม่พบ API URL');
       }
 
-      final uri = Uri.parse('$url/order/store/${widget.storeId}/reviews');
+      final uri = Uri.parse('$url/order/store/${storeId}/reviews');
       log('GET: $uri');
 
       final res = await http

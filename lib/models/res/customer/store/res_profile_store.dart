@@ -69,7 +69,7 @@ class StoreData {
       address:          json['address']?.toString()       ?? '',
       openingHours:     json['opening_hours']?.toString() ?? '',
       closedHours:      json['closed_hours']?.toString()  ?? '',
-      status:           json['status']?.toString()        ?? 'เปิดร้าน',
+      status:           json['status']?.toString()        ?? 'OPEN',
       profileImage:     json['profile_image']?.toString() ?? '',
       serviceRadius:    toDouble(json['service_radius']),
       latitude:         toDouble(json['latitude']),

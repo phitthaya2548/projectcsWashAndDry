@@ -1,57 +1,52 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui' as ui;
 import 'dart:math';
+import 'dart:ui' as ui;
 
-import 'package:flutter/material.dart';
-import 'package:get/get_core/src/get_main.dart';
-import 'package:get/get_navigation/src/extension_navigation.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:get/get.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 
 class CustomerMapScreen extends StatefulWidget {
-  const CustomerMapScreen({super.key, required this.orderId});
-
   final String orderId;
+
+  const CustomerMapScreen({super.key, required this.orderId});
 
   @override
   State<CustomerMapScreen> createState() => _CustomerMapScreenState();
 }
 
 class _CustomerMapScreenState extends State<CustomerMapScreen> {
-  GoogleMapController? _mapController;
-  final Set<Marker>   _markers   = {};
+  static const _blue = Color(0xFF0593FF);
+
+  static const _pickupStatuses = {
+    'pickup_in_progress',
+    'pickup_completed',
+  };
+
+  static const _deliveryStatuses = {
+    'delivery_heading_to_shop',
+    'delivery_pickup_completed',
+    'delivery_in_progress',
+  };
+
+  GoogleMapController? _map;
+  StreamSubscription<DocumentSnapshot>? _orderSub, _riderSub;
+
+  final Set<Marker> _markers = {};
   final Set<Polyline> _polylines = {};
 
-  String  _riderName        = '';
-  String? _riderImage;
-  String? _riderPhone;
-  String? _riderLicensePlate;
-  String? _riderVehicleType;
-  String? _distanceText;
-  String? _durationText;
+  String _status = '', _riderName = '', _address = '';
+  String? _riderId, _riderImage, _phone, _vehicle, _plate;
+  String? _distance, _duration, _customerImage, _error;
 
-  LatLng? _riderPosition;
-  LatLng? _destPosition;
-  String  _destAddress  = '';
-  String? _customerImage;
+  LatLng? _riderPos, _destPos;
+  BitmapDescriptor? _riderIcon, _destIcon;
 
-  bool    _isLoading = true;
-  String? _error;
-
-  BitmapDescriptor? _riderIcon;
-  BitmapDescriptor? _destIcon;
-  List<LatLng>      _routeCache = [];
-
-  // ── สถานะออเดอร์ + ตัวติดตามว่าไรเดอร์ที่กำลังแสดงอยู่คือคนรับ (pickup) หรือไม่ ──
-  String  _orderStatus   = '';
-  bool    _isPickupRider = false;
-
-  StreamSubscription<DocumentSnapshot>? _riderSub;
-  StreamSubscription<DocumentSnapshot>? _orderSub;
-
-  static const _routeColor = Color(0xFF0593FF);
+  bool _loading = true;
+  int _trackingVersion = 0, _routeVersion = 0;
 
   @override
   void initState() {
@@ -61,286 +56,375 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
 
   @override
   void dispose() {
-    _riderSub?.cancel();
+    _trackingVersion++;
+    _routeVersion++;
     _orderSub?.cancel();
-    _mapController?.dispose();
+    _riderSub?.cancel();
+    _map?.dispose();
     super.dispose();
   }
 
   Future<void> _init() async {
     try {
-      final orderDocRef = FirebaseFirestore.instance
-          .collection('orders')
-          .doc(widget.orderId);
+      final ref = FirebaseFirestore.instance.collection('orders').doc(widget.orderId);
+      final snap = await ref.get();
 
-      final orderSnap = await orderDocRef.get();
-
-      if (!orderSnap.exists) {
-        setState(() { _error = 'ไม่พบข้อมูลออเดอร์'; _isLoading = false; });
+      if (!snap.exists) {
+        if (mounted) setState(() { _error = 'ไม่พบข้อมูลออเดอร์'; _loading = false; });
         return;
       }
 
-      final data = orderSnap.data()!;
-      _orderStatus = (data['status'] ?? '') as String;
+      final data = snap.data()!;
+      _status = data['status']?.toString() ?? '';
 
-      // ── ดึงโปรไฟล์ลูกค้า ──
-      final customerRef = data['customer_id'] as DocumentReference?;
-      if (customerRef != null) {
-        final customerSnap = await customerRef.get();
-        final customerData = customerSnap.data() as Map<String, dynamic>?;
-        _customerImage = customerData?['profile_image'] as String?;
-      }
+      await _loadDestination(data);
+      await _setupRider(data);
 
-      // ── ดึงที่อยู่ปลายทาง + สร้างหมุดโปรไฟล์ลูกค้า ──
-      final addressRef = data['address_id'] as DocumentReference?;
-      if (addressRef != null) {
-        final addrSnap = await addressRef.get();
-        final addr     = addrSnap.data() as Map<String, dynamic>?;
-        final lat      = (addr?['latitude']  as num?)?.toDouble();
-        final lng      = (addr?['longitude'] as num?)?.toDouble();
-        if (lat != null && lng != null) {
-          _destPosition = LatLng(lat, lng);
-          _destAddress  = addr?['address_text'] ?? 'ปลายทาง';
-          _destIcon     = await _makeProfileMarker(_customerImage, Colors.red);
-
-          _markers.add(Marker(
-            markerId:   const MarkerId('dest'),
-            position:   _destPosition!,
-            icon:       _destIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-            infoWindow: InfoWindow(title: '📍 ปลายทาง', snippet: _destAddress),
-          ));
-        }
-      }
-
-      await _setupRiderTracking(data);
-
-      // ── ฟังการเปลี่ยนแปลงสถานะออเดอร์แบบเรียลไทม์ ──
-      _orderSub = orderDocRef.snapshots().listen(_onOrderUpdate);
-
+      _orderSub?.cancel();
+      _orderSub = ref.snapshots().listen(_onOrderUpdate);
     } catch (e) {
-      debugPrint('_init error: $e');
-      setState(() { _error = 'เกิดข้อผิดพลาด: $e'; _isLoading = false; });
+      if (mounted) setState(() { _error = 'เกิดข้อผิดพลาด: $e'; _loading = false; });
     }
   }
 
-  /// เลือกไรเดอร์ที่จะติดตามตามสถานะออเดอร์ปัจจุบัน แล้วเริ่ม/สลับการฟังตำแหน่ง
-  Future<void> _setupRiderTracking(Map<String, dynamic> data) async {
-    final pickupRef   = data['rider_pickup_id']   as DocumentReference?;
-    final deliveryRef = data['rider_delivery_id'] as DocumentReference?;
-
-    DocumentReference? riderRef;
-    bool isPickup = false;
-
-    if (_orderStatus == 'pickup_completed') {
-      // รับของเสร็จแล้ว: ห้ามใช้ rider_pickup_id อีกต่อไป
-      riderRef = deliveryRef;
-      isPickup = false;
-    } else {
-      riderRef = pickupRef ?? deliveryRef;
-      isPickup = riderRef == pickupRef;
+  Future<void> _loadDestination(Map<String, dynamic> data) async {
+    final customerRef = data['customer_id'] as DocumentReference?;
+    if (customerRef != null) {
+      final snap = await customerRef.get();
+      final d = snap.data() as Map<String, dynamic>?;
+      _customerImage = d?['profile_image']?.toString();
     }
 
-    if (riderRef == null) {
-      if (mounted) setState(() => _isLoading = false);
+    final addressRef = data['address_id'] as DocumentReference?;
+    if (addressRef == null) return;
+
+    final snap = await addressRef.get();
+    final d = snap.data() as Map<String, dynamic>?;
+    final lat = (d?['latitude'] as num?)?.toDouble();
+    final lng = (d?['longitude'] as num?)?.toDouble();
+    if (lat == null || lng == null) return;
+
+    _destPos = LatLng(lat, lng);
+    _address = d?['address_text']?.toString() ?? 'ปลายทาง';
+    _destIcon = await _makeMarker(_customerImage, Colors.red);
+
+    if (!mounted) return;
+
+    setState(() {
+      _markers
+        ..removeWhere((m) => m.markerId.value == 'dest')
+        ..add(Marker(
+          markerId: const MarkerId('dest'),
+          position: _destPos!,
+          icon: _destIcon ??
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
+          infoWindow: InfoWindow(title: 'ปลายทาง', snippet: _address),
+        ));
+    });
+  }
+
+  DocumentReference? _activeRider(Map<String, dynamic> data) {
+    if (_pickupStatuses.contains(_status)) {
+      return data['rider_pickup_id'] as DocumentReference?;
+    }
+
+    if (_deliveryStatuses.contains(_status)) {
+      return data['rider_delivery_id'] as DocumentReference?;
+    }
+
+    return null;
+  }
+
+  Future<void> _setupRider(Map<String, dynamic> data) async {
+    final version = ++_trackingVersion;
+    final ref = _activeRider(data);
+
+    if (ref == null) {
+      _clearRider();
       return;
     }
 
-    final riderSnap = await riderRef.get();
-    final riderData = riderSnap.data() as Map<String, dynamic>?;
+    if (_riderId == ref.id && _riderSub != null) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
 
-    _riderName         = (riderData?['fullname'] ?? riderData?['username'] ?? 'ไรเดอร์') as String;
-    _riderImage        = riderData?['profile_image']  as String?;
-    _riderPhone        = riderData?['phone']          as String?;
-    _riderLicensePlate = riderData?['license_plate']  as String?;
-    _riderVehicleType  = riderData?['vehicle_type']   as String?;
+    await _riderSub?.cancel();
+    _riderSub = null;
 
-    _riderIcon = await _makeProfileMarker(_riderImage, _routeColor);
+    try {
+      final snap = await ref.get();
+      if (!mounted || version != _trackingVersion || !snap.exists) return;
 
-    _isPickupRider = isPickup;
-    _riderSub?.cancel();
-    _riderSub = riderRef.snapshots().listen(_onRiderUpdate);
-  }
+      final d = snap.data() as Map<String, dynamic>?;
+      final name = (d?['fullname'] ?? d?['username'] ?? 'ไรเดอร์').toString();
+      final image = d?['profile_image']?.toString();
+      final icon = await _makeMarker(image, _blue);
 
-  /// เรียกทุกครั้งที่เอกสารออเดอร์เปลี่ยน ใช้เช็คว่าสถานะเปลี่ยนเป็น pickup_completed หรือยัง
-  void _onOrderUpdate(DocumentSnapshot snap) {
-    if (!snap.exists) return;
-    final data = snap.data() as Map<String, dynamic>;
-    final newStatus = (data['status'] ?? '') as String;
+      if (!mounted || version != _trackingVersion) return;
 
-    if (newStatus == _orderStatus) return; // สถานะไม่เปลี่ยน ไม่ต้องทำอะไร
-    _orderStatus = newStatus;
+      _riderId = ref.id;
 
-    if (_orderStatus == 'pickup_completed' && _isPickupRider) {
-      // หยุดติดตามไรเดอร์รับของ + ลบออกจากแผนที่ทันที
-      _stopRiderTracking();
-      // ถ้ามีไรเดอร์ส่งของแล้ว ให้เริ่มติดตามคนใหม่แทน
-      _setupRiderTracking(data);
+      setState(() {
+        _riderName = name;
+        _riderImage = image;
+        _phone = d?['phone']?.toString();
+        _vehicle = d?['vehicle_type']?.toString();
+        _plate = d?['license_plate']?.toString();
+        _riderIcon = icon;
+        _loading = false;
+      });
+
+      _riderSub = ref.snapshots().listen(_onRiderUpdate);
+    } catch (_) {
+      if (mounted && version == _trackingVersion) _clearRider();
     }
   }
 
-  /// หยุดฟังตำแหน่งไรเดอร์ปัจจุบัน และลบ marker/polyline/ข้อมูลที่เกี่ยวข้องออกจากแผนที่
-  void _stopRiderTracking() {
+  void _onOrderUpdate(DocumentSnapshot snap) {
+    if (!snap.exists || !mounted) return;
+
+    final data = snap.data() as Map<String, dynamic>;
+    final newStatus = data['status']?.toString() ?? '';
+
+    if (newStatus == _status) return;
+
+    setState(() => _status = newStatus);
+    _setupRider(data);
+  }
+
+  void _clearRider() {
+    _trackingVersion++;
+    _routeVersion++;
     _riderSub?.cancel();
     _riderSub = null;
+    _riderId = null;
 
     if (!mounted) return;
+
     setState(() {
-      _riderPosition = null;
-      _distanceText  = null;
-      _durationText  = null;
-      _routeCache    = [];
+      _riderName = '';
+      _riderImage = null;
+      _phone = null;
+      _vehicle = null;
+      _plate = null;
+      _riderIcon = null;
+      _riderPos = null;
+      _distance = null;
+      _duration = null;
+      _loading = false;
       _markers.removeWhere((m) => m.markerId.value == 'rider');
       _polylines.removeWhere((p) => p.polylineId.value == 'route');
     });
+
+    if (_destPos != null) {
+      _map?.animateCamera(CameraUpdate.newLatLngZoom(_destPos!, 15));
+    }
   }
 
   void _onRiderUpdate(DocumentSnapshot snap) {
-    if (!snap.exists) return;
-    final data = snap.data() as Map<String, dynamic>;
+    if (!snap.exists || !mounted) return;
 
-    final lat = (data['latitude']  as num?)?.toDouble();
-    final lng = (data['longitude'] as num?)?.toDouble();
-
-    if (lat == null || lng == null) {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
+    final d = snap.data() as Map<String, dynamic>;
+    final lat = (d['latitude'] as num?)?.toDouble();
+    final lng = (d['longitude'] as num?)?.toDouble();
+    if (lat == null || lng == null) return;
 
     final pos = LatLng(lat, lng);
 
-    if (!mounted) return;
     setState(() {
-      _riderPosition = pos;
-      _isLoading     = false;
-
+      _riderPos = pos;
+      _loading = false;
       _markers
         ..removeWhere((m) => m.markerId.value == 'rider')
         ..add(Marker(
-          markerId:   const MarkerId('rider'),
-          position:   pos,
-          icon:       _riderIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
-          infoWindow: InfoWindow(title: '🛵 $_riderName'),
+          markerId: const MarkerId('rider'),
+          position: pos,
+          icon: _riderIcon ??
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+          infoWindow: InfoWindow(title: _riderName),
         ));
-
-      if (_routeCache.isNotEmpty) {
-        _polylines
-          ..removeWhere((p) => p.polylineId.value == 'route')
-          ..add(Polyline(
-            polylineId: const PolylineId('route'),
-            points:     _routeCache,
-            color:      _routeColor,
-            width:      5,
-          ));
-      }
     });
 
-    if (_destPosition != null) {
-      _fetchAndDrawRoute(pos, _destPosition!);
-      _fitBounds(pos, _destPosition!);
+    if (_destPos != null) {
+      _drawRoute(pos, _destPos!);
+      _fitBounds(pos, _destPos!);
     }
   }
 
-  Future<void> _fetchAndDrawRoute(LatLng from, LatLng to) async {
-    final url = Uri.parse(
+  Future<void> _drawRoute(LatLng from, LatLng to) async {
+    final version = ++_routeVersion;
+
+    final uri = Uri.parse(
       'https://router.project-osrm.org/route/v1/driving/'
       '${from.longitude},${from.latitude};${to.longitude},${to.latitude}'
       '?overview=full&geometries=geojson',
     );
-    try {
-      final res = await http.get(url).timeout(const Duration(seconds: 10));
-      if (res.statusCode != 200) return;
-      final body  = jsonDecode(res.body);
-      final route = (body['routes'] as List?)?.first;
-      if (route == null) return;
 
-      final distanceM = (route['distance'] as num).toDouble();
-      final durationS = (route['duration'] as num).toDouble();
-      final points    = (route['geometry']['coordinates'] as List)
-          .map((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()))
+    try {
+      final res = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) return;
+
+      final routes = jsonDecode(res.body)['routes'] as List?;
+      if (routes == null || routes.isEmpty) return;
+
+      final route = routes.first;
+      final distance = (route['distance'] as num).toDouble();
+      final duration = (route['duration'] as num).toDouble();
+
+      final points = (route['geometry']['coordinates'] as List)
+          .map((c) => LatLng(
+                (c[1] as num).toDouble(),
+                (c[0] as num).toDouble(),
+              ))
           .toList();
 
-      if (!mounted) return;
-      _routeCache = points;
+      if (!mounted || version != _routeVersion || _riderPos == null) return;
 
       setState(() {
-        _distanceText = distanceM >= 1000
-            ? '${(distanceM / 1000).toStringAsFixed(1)} กม.'
-            : '${distanceM.toInt()} ม.';
-        _durationText = '${(durationS / 60).ceil()} นาที';
+        _distance = distance >= 1000
+            ? '${(distance / 1000).toStringAsFixed(1)} กม.'
+            : '${distance.toInt()} ม.';
+        _duration = '${(duration / 60).ceil()} นาที';
+
         _polylines
           ..removeWhere((p) => p.polylineId.value == 'route')
           ..add(Polyline(
             polylineId: const PolylineId('route'),
-            points:     points,
-            color:      _routeColor,
-            width:      5,
+            points: points,
+            color: _blue,
+            width: 5,
           ));
       });
-    } catch (e) {
-      debugPrint('OSRM error: $e');
-    }
+    } catch (_) {}
   }
 
   void _fitBounds(LatLng a, LatLng b) {
-    final bounds = LatLngBounds(
-      southwest: LatLng(min(a.latitude, b.latitude),  min(a.longitude, b.longitude)),
-      northeast: LatLng(max(a.latitude, b.latitude),  max(a.longitude, b.longitude)),
+    if (a == b) {
+      _map?.animateCamera(CameraUpdate.newLatLngZoom(a, 16));
+      return;
+    }
+
+    _map?.animateCamera(
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(
+            min(a.latitude, b.latitude),
+            min(a.longitude, b.longitude),
+          ),
+          northeast: LatLng(
+            max(a.latitude, b.latitude),
+            max(a.longitude, b.longitude),
+          ),
+        ),
+        80,
+      ),
     );
-    _mapController?.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
   }
 
-  Future<BitmapDescriptor> _makeProfileMarker(String? imageUrl, Color borderColor) async {
-    const double size        = 120;
-    const double borderWidth = 6;
-    const double photoRadius = size / 2 - borderWidth;
+  Future<BitmapDescriptor> _makeMarker(String? imageUrl, Color color) async {
+    const size = 120.0;
+    const radius = 54.0;
 
     final recorder = ui.PictureRecorder();
-    final canvas   = Canvas(recorder);
+    final canvas = Canvas(recorder);
 
-    canvas.drawCircle(const Offset(size / 2, size / 2), size / 2,
-        Paint()..color = borderColor);
+    canvas.drawCircle(
+      const Offset(60, 60),
+      60,
+      Paint()..color = color,
+    );
 
-    if (imageUrl != null && imageUrl.isNotEmpty) {
+    if (imageUrl?.isNotEmpty == true) {
       try {
-        final res = await http.get(Uri.parse(imageUrl)).timeout(const Duration(seconds: 5));
-        if (res.statusCode == 200) {
-          final codec = await ui.instantiateImageCodec(
-              res.bodyBytes, targetWidth: size.toInt(), targetHeight: size.toInt());
-          final frame = await codec.getNextFrame();
-          canvas
-            ..save()
-            ..clipPath(Path()..addOval(Rect.fromCircle(
-                center: const Offset(size / 2, size / 2), radius: photoRadius)))
-            ..drawImageRect(
-              frame.image,
-              Rect.fromLTWH(0, 0, frame.image.width.toDouble(), frame.image.height.toDouble()),
-              Rect.fromCircle(center: const Offset(size / 2, size / 2), radius: photoRadius),
-              Paint(),
-            )
-            ..restore();
-          return _toDescriptor(recorder, size);
-        }
+        final res = await http.get(Uri.parse(imageUrl!));
+        final codec = await ui.instantiateImageCodec(
+          res.bodyBytes,
+          targetWidth: 120,
+          targetHeight: 120,
+        );
+        final image = (await codec.getNextFrame()).image;
+
+        canvas.save();
+        canvas.clipPath(
+          Path()..addOval(
+            Rect.fromCircle(center: const Offset(60, 60), radius: radius),
+          ),
+        );
+        canvas.drawImageRect(
+          image,
+          Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+          Rect.fromCircle(center: const Offset(60, 60), radius: radius),
+          Paint(),
+        );
+        canvas.restore();
+        return _descriptor(recorder);
       } catch (_) {}
     }
 
-    // fallback icon
-    canvas.drawCircle(Offset(size / 2, size / 2), photoRadius,
-        Paint()..color = borderColor.withOpacity(0.2));
-    final fill = Paint()..color = borderColor;
-    canvas.drawCircle(Offset(size / 2, size / 2 - photoRadius * 0.2), photoRadius * 0.3, fill);
-    canvas.drawArc(
-      Rect.fromCenter(
-          center: Offset(size / 2, size / 2 + photoRadius * 0.35),
-          width: photoRadius * 0.9, height: photoRadius * 0.55),
-      0, pi, true, fill,
+    canvas.drawCircle(
+      const Offset(60, 60),
+      radius,
+      Paint()..color = color.withOpacity(.2),
     );
-    return _toDescriptor(recorder, size);
+
+    final p = Paint()..color = color;
+    canvas.drawCircle(const Offset(60, 48), 17, p);
+    canvas.drawArc(
+      Rect.fromCenter(center: const Offset(60, 82), width: 48, height: 28),
+      0,
+      pi,
+      true,
+      p,
+    );
+
+    return _descriptor(recorder);
   }
 
-  Future<BitmapDescriptor> _toDescriptor(ui.PictureRecorder recorder, double size) async {
-    final img      = await recorder.endRecording().toImage(size.toInt(), size.toInt());
-    final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
-    return BitmapDescriptor.fromBytes(byteData!.buffer.asUint8List());
+  Future<BitmapDescriptor> _descriptor(ui.PictureRecorder recorder) async {
+    final image = await recorder.endRecording().toImage(120, 120);
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.fromBytes(bytes!.buffer.asUint8List());
+  }
+
+  String get _statusText {
+    const data = {
+      'pickup_in_progress': 'กำลังไปรับผ้า',
+      'pickup_completed': 'กำลังนำผ้าไปที่ร้าน',
+      'delivery_heading_to_shop': 'กำลังไปที่ร้าน',
+      'delivery_pickup_completed': 'รับผ้าที่ร้านแล้ว',
+      'delivery_in_progress': 'กำลังจัดส่ง',
+    };
+    return data[_status] ?? '';
+  }
+
+  String get _waitingText {
+    const data = {
+      'waiting_pickup': 'กำลังรอไรเดอร์รับผ้ารับงาน...',
+      'waiting_delivery': 'กำลังรอไรเดอร์ส่งผ้ารับงาน...',
+      'completed': 'จัดส่งเรียบร้อยแล้ว',
+      'cancelled': 'ออเดอร์ถูกยกเลิก',
+    };
+    return data[_status] ?? 'ยังไม่มีไรเดอร์ที่ต้องติดตาม';
+  }
+
+  String _vehicleText(String value) {
+    // รองรับค่าประเภทยานพาหนะจาก Backend ที่เป็นภาษาอังกฤษ
+    // และแปลงเป็นภาษาไทยสำหรับแสดงผลบน UI
+    const data = {
+      'motorcycle': 'มอเตอร์ไซค์',
+      'motorbike': 'มอเตอร์ไซค์',
+      'car': 'รถยนต์',
+
+      // รองรับข้อมูลเก่าที่อาจถูกบันทึกเป็นภาษาไทย
+      'มอเตอร์ไซค์': 'มอเตอร์ไซค์',
+      'จักรยานยนต์': 'มอเตอร์ไซค์',
+      'รถจักรยานยนต์': 'มอเตอร์ไซค์',
+      'รถยนต์': 'รถยนต์',
+    };
+
+    final normalized = value.trim().toLowerCase();
+    return data[normalized] ?? value;
   }
 
   @override
@@ -348,6 +432,11 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF0F4F8),
       appBar: AppBar(
+        title: const Text(
+          'ติดตามไรเดอร์',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+        ),
+        iconTheme: const IconThemeData(color: Colors.white),
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -357,15 +446,9 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
             ),
           ),
         ),
-        title: const Text(
-          "ติดตามไรเดอร์",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
-        ),
-        iconTheme: const IconThemeData(color: Colors.white),
-        elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios),
-         onPressed: () => Get.back(result: true),
+          onPressed: () => Get.back(result: true),
         ),
       ),
       body: _buildBody(),
@@ -373,285 +456,236 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
   }
 
   Widget _buildBody() {
-    if (_isLoading) {
-      return const Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          CircularProgressIndicator(color: Color(0xFF0593FF)),
-          SizedBox(height: 16),
-          Text('กำลังโหลดข้อมูล...', style: TextStyle(color: Colors.grey)),
-        ]),
-      );
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator(color: _blue));
     }
 
     if (_error != null) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.error_outline_rounded, size: 72, color: Colors.grey.shade300),
-            const SizedBox(height: 16),
-            Text(_error!, textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 15, color: Colors.black54)),
-            const SizedBox(height: 24),
-            FilledButton.icon(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_error!),
+            const SizedBox(height: 15),
+            FilledButton(
               onPressed: () {
-                setState(() { _isLoading = true; _error = null; });
+                setState(() {
+                  _loading = true;
+                  _error = null;
+                });
                 _init();
               },
-              icon:  const Icon(Icons.refresh_rounded),
-              label: const Text('ลองใหม่'),
-              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF0593FF)),
+              child: const Text('ลองใหม่'),
             ),
-          ]),
+          ],
         ),
       );
     }
 
-    final initialPos = _riderPosition ?? _destPosition ?? const LatLng(13.7563, 100.5018);
-    final hasRider   = _riderPosition != null;
+    final initial = _riderPos ?? _destPos ?? const LatLng(13.7563, 100.5018);
 
     return Stack(
       children: [
         GoogleMap(
-          initialCameraPosition: CameraPosition(target: initialPos, zoom: 14),
-          onMapCreated: (ctrl) {
-            _mapController = ctrl;
-            if (_riderPosition != null && _destPosition != null) {
-              _fitBounds(_riderPosition!, _destPosition!);
-            } else if (_destPosition != null) {
-              ctrl.animateCamera(CameraUpdate.newLatLngZoom(_destPosition!, 15));
+          initialCameraPosition: CameraPosition(target: initial, zoom: 14),
+          markers: _markers,
+          polylines: _polylines,
+          zoomControlsEnabled: false,
+          mapToolbarEnabled: false,
+          onMapCreated: (c) {
+            _map = c;
+            if (_riderPos != null && _destPos != null) {
+              _fitBounds(_riderPos!, _destPos!);
+            } else if (_destPos != null) {
+              c.animateCamera(CameraUpdate.newLatLngZoom(_destPos!, 15));
             }
           },
-          markers:             _markers,
-          polylines:           _polylines,
-          zoomControlsEnabled: false,
-          mapToolbarEnabled:   false,
         ),
-
-        if (hasRider)
-          Positioned(
-            left: 16, right: 16, bottom: 32,
-            child: _buildRiderCard(),
-          ),
-
-        if (!hasRider)
-          Positioned(
-            left: 16, right: 16, bottom: 32,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [BoxShadow(
-                  color: Colors.black.withOpacity(0.10),
-                  blurRadius: 16,
-                  offset: const Offset(0, 6),
-                )],
-              ),
-              child: const Row(
-                children: [
-                  CircularProgressIndicator(strokeWidth: 2, color: _routeColor),
-                  SizedBox(width: 14),
-                  Text('กำลังรอไรเดอร์รับงาน...',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-                ],
-              ),
-            ),
-          ),
+        Positioned(
+          left: 14,
+          right: 14,
+          bottom: 24,
+          child: _riderPos != null ? _riderCard() : _waitingCard(),
+        ),
       ],
     );
   }
 
-  Widget _buildRiderCard() {
-  return Container(
-    padding: const EdgeInsets.all(18),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(24),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.08),
-          blurRadius: 24,
-          offset: const Offset(0, 8),
-        ),
-      ],
-    ),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            _buildAvatar(_riderImage),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          _riderName,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 16,
-                            color: Color(0xFF1A1A1A),
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
+  Widget _riderCard() {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(.1),
+            blurRadius: 18,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              _avatar(),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _riderName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
                       ),
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF0593FF).withOpacity(0.10),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Text(
-                          'กำลังจัดส่ง',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF0593FF),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            if (_distanceText != null)
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    _distanceText!,
-                    style: const TextStyle(
-                      color: Color(0xFF0593FF),
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
                     ),
-                  ),
-                  Text(
-                    _durationText ?? '',
-                    style: TextStyle(color: Colors.grey.shade400, fontSize: 11.5),
-                  ),
-                ],
-              )
-            else if (_riderPosition != null)
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0593FF)),
+                    const SizedBox(height: 3),
+                    Text(
+                      _statusText,
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        color: _blue,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            if (_riderPhone != null && _riderPhone!.isNotEmpty)
+              if (_distance != null)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      _distance!,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: _blue,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Text(
+                      _duration ?? '',
+                      style: TextStyle(fontSize: 10.5, color: Colors.grey.shade500),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: _infoBox('เบอร์โทร', _phone ?? '-')),
+              const SizedBox(width: 7),
               Expanded(
-                child: _infoChip(icon: Icons.phone_rounded, label: 'เบอร์โทร', value: _riderPhone!),
+                child: _infoBox(
+                  'พาหนะ',
+                  _vehicle?.isNotEmpty == true ? _vehicleText(_vehicle!) : '-',
+                ),
               ),
-            if (_riderLicensePlate != null && _riderLicensePlate!.isNotEmpty) ...[
-              const SizedBox(width: 8),
+              const SizedBox(width: 7),
               Expanded(
-                child: _infoChip(
-                  icon: Icons.confirmation_number_rounded,
-                  label: 'ทะเบียน',
-                  value: _riderLicensePlate!.toUpperCase(),
+                child: _infoBox(
+                  'ทะเบียนรถ',
+                  _plate?.isNotEmpty == true ? _plate!.toUpperCase() : '-',
                 ),
               ),
             ],
-            if (_riderVehicleType != null && _riderVehicleType!.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              Expanded(
-                child: _infoChip(
-                  icon: Icons.two_wheeler_rounded,
-                  label: 'ประเภทรถ',
-                  value: _riderVehicleType!,
-                ),
-              ),
-            ],
-          ],
-        ),
-      ],
-    ),
-  );
-}
-
-Widget _infoChip({required IconData icon, required String label, required String value}) {
-  return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-    decoration: BoxDecoration(
-      color: const Color(0xFFF7F9FC),
-      borderRadius: BorderRadius.circular(14),
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(icon, size: 13, color: const Color(0xFF0593FF)),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 9.5,
-                color: Colors.grey.shade500,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF1A1A1A)),
-          overflow: TextOverflow.ellipsis,
-        ),
-      ],
-    ),
-  );
-}
-
-Widget _buildAvatar(String? imageUrl) {
-  return Container(
-    padding: const EdgeInsets.all(2.5),
-    decoration: BoxDecoration(
-      shape: BoxShape.circle,
-      gradient: const LinearGradient(
-        colors: [Color(0xFF0593FF), Color(0xFF6DC1FF)],
+          ),
+        ],
       ),
-    ),
-    child: CircleAvatar(
-      radius: 24,
-      backgroundColor: Colors.white,
+    );
+  }
+
+  Widget _avatar() {
+    return Container(
+      width: 55,
+      height: 55,
+      padding: const EdgeInsets.all(2),
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        color: _blue,
+      ),
       child: ClipOval(
-        child: imageUrl != null && imageUrl.isNotEmpty
+        child: _riderImage?.isNotEmpty == true
             ? Image.network(
-                imageUrl,
-                width: 44,
-                height: 44,
+                _riderImage!,
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _placeholderAvatar(),
+                errorBuilder: (_, __, ___) => _avatarFallback(),
               )
-            : _placeholderAvatar(),
+            : _avatarFallback(),
       ),
-    ),
-  );
-}
+    );
+  }
 
-Widget _placeholderAvatar() {
-  return Container(
-    width: 44,
-    height: 44,
-    color: const Color(0x1A0593FF),
-    child: const Icon(Icons.delivery_dining_rounded, size: 22, color: Color(0xFF0593FF)),
-  );
-}
+  Widget _avatarFallback() {
+    return Container(
+      color: const Color(0xFFEAF6FF),
+      alignment: Alignment.center,
+      child: Text(
+        _riderName.isEmpty ? 'R' : _riderName.substring(0, 1).toUpperCase(),
+        style: const TextStyle(
+          fontSize: 20,
+          color: _blue,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  Widget _infoBox(String title, String value) {
+    return Container(
+      height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F8FC),
+        borderRadius: BorderRadius.circular(11),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(fontSize: 9.5, color: Colors.grey.shade500),
+          ),
+          const Spacer(),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _waitingCard() {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(.08),
+            blurRadius: 15,
+          ),
+        ],
+      ),
+      child: Text(
+        _waitingText,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+      ),
+    );
+  }
 }

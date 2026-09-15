@@ -61,7 +61,7 @@ class _StoreCompletedScreenState extends State<StoreCompletedScreen> {
       _error = null;
     });
     try {
-      final uri = Uri.parse('$_url/order/store/completed/${widget.orderId}');
+      final uri = Uri.parse('$_url/order/store/completed/detail/${widget.orderId}');
       final res = await http
           .get(uri, headers: {'Content-Type': 'application/json'})
           .timeout(const Duration(seconds: 10));
@@ -267,6 +267,8 @@ class _StoreCompletedScreenState extends State<StoreCompletedScreen> {
               children: [
                 _buildRow('ค่าบริการ', '${o.servicePrice.toInt()} ฿'),
                 _buildRow('ค่าจัดส่ง', '${o.deliveryPrice.toInt()} ฿'),
+                if (o.detergentPrice > 0)
+  _buildRow('ค่าน้ำยาซัก', '${o.detergentPrice.toInt()} ฿'),
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 8),
                   child: Divider(height: 1, color: Color(0xFFE2E8F0)),

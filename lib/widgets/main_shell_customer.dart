@@ -6,15 +6,25 @@ import 'package:wash_and_dry/screens/customer/wallet/customer_wallet_screen.dart
 
 
 class MainShellCustomer extends StatefulWidget {
-  const MainShellCustomer({super.key});
+  final int initialIndex;
+
+  const MainShellCustomer({
+    super.key,
+    this.initialIndex = 0,
+  });
 
   @override
   State<MainShellCustomer> createState() => _MainShellState();
 }
 
 class _MainShellState extends State<MainShellCustomer> {
-  int _index = 0;
+  late int _index;
 
+  @override
+  void initState() {
+    super.initState();
+    _index = widget.initialIndex;
+  }
   final _pages = const [
     HomeScreen(),
     OrdersListScreen(),

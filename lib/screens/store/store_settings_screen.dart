@@ -421,7 +421,7 @@ Get.to(() => const ManageCustomersScreen());
                             title: 'รีวิวร้าน',
                             subtitle: 'ดูคะแนนและความคิดเห็นจากลูกค้า',
                             onTap: () {
-                              Get.to(() => StoreReviewScreen(storeId: storeId ?? ''));
+                              Get.to(() => StoreReviewScreen());
                             },
                           ),
                           const SizedBox(height: 12),

@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:developer';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
@@ -10,9 +12,35 @@ import 'package:wash_and_dry/screens/staff/staff_calculate_screen.dart';
 import 'package:wash_and_dry/service/session_service.dart';
 import 'package:wash_and_dry/widgets/appbarstaff.dart';
 
+void showStatusSnackbar({required String message, required bool success}) {
+  Get.closeAllSnackbars();
+  Get.snackbar(
+    success ? 'สำเร็จ' : 'ผิดพลาด',
+    message,
+    snackPosition: SnackPosition.TOP,
+    backgroundColor: Colors.white,
+    colorText: Colors.black87,
+    margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+    borderRadius: 12,
+    icon: Icon(
+      success ? Icons.check_circle : Icons.error,
+      color: success ? const Color(0xFF22C55E) : const Color(0xFFEF4444),
+    ),
+    duration: const Duration(seconds: 3),
+    isDismissible: true,
+    snackStyle: SnackStyle.FLOATING,
+    boxShadows: [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.08),
+        blurRadius: 10,
+        offset: const Offset(0, 4),
+      ),
+    ],
+  );
+}
+
 class StaffHistoryScreen extends StatefulWidget {
   const StaffHistoryScreen({super.key});
-
   @override
   State<StaffHistoryScreen> createState() => _StaffHistoryScreenState();
 }
@@ -23,12 +51,15 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
   String _staffName = '';
   String? _profileImage;
   String? _staffId;
-
   late TabController _tabController;
   List<StaffOrder> _activeOrders = [];
   List<StaffOrder> _doneOrders = [];
   bool _isLoading = false;
-
+  final Map<String, String> _lastKnownStatus = {};
+  final Map<String, Duration> _remainingTimes = {};
+  final Map<String, String> _countdownStatus = {};
+  StreamSubscription<QuerySnapshot>? _statusSub;
+  Timer? _countdownTimer;
   static const _activeStatuses = [
     'waiting_wash',
     'waiting_dry',
@@ -37,7 +68,6 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
     'washing',
     'drying',
   ];
-
   @override
   void initState() {
     super.initState();
@@ -47,7 +77,9 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
 
   @override
   void dispose() {
+    _countdownTimer?.cancel();
     _tabController.dispose();
+    _statusSub?.cancel();
     super.dispose();
   }
 
@@ -57,34 +89,65 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
       if (!mounted) return;
       setState(() => _url = config['apiEndpoint']?.toString() ?? '');
     } catch (_) {}
-
     final session = Session();
     final name = await session.getFullname();
     final image = await session.getProfileImage();
     final id = await session.getStaffId();
     if (!mounted) return;
-
     setState(() {
       _staffName = name ?? 'Staff';
       _profileImage = image;
       _staffId = id;
     });
-
     await _fetchOrders();
+    _listenOrderStatus();
+  }
+
+  void _listenOrderStatus() {
+    if (_staffId == null || _staffId!.isEmpty) return;
+    final staffRef = FirebaseFirestore.instance
+        .collection('laundry_staff')
+        .doc(_staffId);
+    _statusSub?.cancel();
+    _statusSub = FirebaseFirestore.instance
+        .collection('orders')
+        .where('staff_id', isEqualTo: staffRef)
+        .snapshots()
+        .listen((snapshot) async {
+          log('>>> SNAPSHOT DOCS COUNT: ${snapshot.docs.length}');
+          bool shouldRefresh = false;
+          for (final doc in snapshot.docs) {
+            final data = doc.data();
+            final status = data['status']?.toString();
+            log('>>> DOC ${doc.id} status=$status');
+            if (status == null) continue;
+            final previousStatus = _lastKnownStatus[doc.id];
+            final statusChanged = previousStatus != status;
+            _lastKnownStatus[doc.id] = status;
+            if (statusChanged || status == 'payment_completed') {
+              shouldRefresh = true;
+            }
+            if (status != 'washing' && status != 'drying') {
+              _remainingTimes.remove(doc.id);
+              _countdownStatus.remove(doc.id);
+            }
+          }
+          log('>>> SHOULD REFRESH: $shouldRefresh');
+          if (shouldRefresh) {
+            await _fetchOrders();
+          }
+        }, onError: (e) => log('>>> STATUS STREAM ERROR: $e'));
   }
 
   Future<void> _fetchOrders() async {
     if (_staffId == null || _url.isEmpty) return;
     setState(() => _isLoading = true);
-
     try {
       final uri = Uri.parse('$_url/order/staff/historynow/$_staffId');
       log('>>> URL: $uri');
-
       final res = await http.get(uri);
       log('>>> STATUS: ${res.statusCode}');
       if (!mounted) return;
-
       if (res.statusCode == 200) {
         final response = staffOrderListResponseFromJson(res.body);
         setState(() {
@@ -92,15 +155,94 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
               .where((o) => _activeStatuses.contains(o.status))
               .toList();
           _doneOrders = response.data
-              .where((o) => o.status == 'waiting_delivery')
+              .where(
+                (o) => const [
+                  'waiting_delivery',
+                  'delivery_heading_to_shop',
+                  'delivery_pickup_completed',
+                  'delivery_in_progress',
+                  'completed',
+                ].contains(o.status),
+              )
               .toList();
         });
+        for (final o in response.data) {
+          _lastKnownStatus[o.id] = o.status;
+        }
+        _syncCountdowns(response.data);
       }
     } catch (e) {
       log('>>> ERROR: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  void _syncCountdowns(List<StaffOrder> orders) {
+    final activeOrderIds = <String>{};
+    for (final order in orders) {
+      final isWashing = order.status == 'washing';
+      final isDrying = order.status == 'drying';
+      if (!isWashing && !isDrying) {
+        _remainingTimes.remove(order.id);
+        _countdownStatus.remove(order.id);
+        continue;
+      }
+      activeOrderIds.add(order.id);
+      final workMinutes = isWashing
+          ? order.washer?.workMinutes
+          : order.dryer?.workMinutes;
+      if (workMinutes == null || workMinutes <= 0) {
+        _remainingTimes[order.id] = Duration.zero;
+        _countdownStatus[order.id] = order.status;
+        continue;
+      }
+      final isNewProcess = _countdownStatus[order.id] != order.status;
+      if (isNewProcess || !_remainingTimes.containsKey(order.id)) {
+        _remainingTimes[order.id] = Duration(minutes: workMinutes.toInt());
+        _countdownStatus[order.id] = order.status;
+      }
+    }
+    final removedOrderIds = _remainingTimes.keys
+        .where((id) => !activeOrderIds.contains(id))
+        .toList();
+    for (final id in removedOrderIds) {
+      _remainingTimes.remove(id);
+      _countdownStatus.remove(id);
+    }
+    if (_remainingTimes.isNotEmpty) {
+      _startCountdownTimer();
+    } else {
+      _countdownTimer?.cancel();
+      _countdownTimer = null;
+    }
+  }
+
+  void _startCountdownTimer() {
+    if (_countdownTimer?.isActive ?? false) return;
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      bool hasRunningCountdown = false;
+      final updated = <String, Duration>{};
+      for (final entry in _remainingTimes.entries) {
+        final next = entry.value - const Duration(seconds: 1);
+        if (next.isNegative || next == Duration.zero) {
+          updated[entry.key] = Duration.zero;
+        } else {
+          updated[entry.key] = next;
+          hasRunningCountdown = true;
+        }
+      }
+      setState(() {
+        _remainingTimes
+          ..clear()
+          ..addAll(updated);
+      });
+      if (!hasRunningCountdown) {
+        _countdownTimer?.cancel();
+        _countdownTimer = null;
+      }
+    });
   }
 
   @override
@@ -116,7 +258,7 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
         children: [
           _buildTabBar(),
           Expanded(
-            child: _isLoading
+            child: _isLoading && _activeOrders.isEmpty && _doneOrders.isEmpty
                 ? const Center(child: CircularProgressIndicator())
                 : TabBarView(
                     controller: _tabController,
@@ -148,7 +290,6 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
       ],
     ),
   );
-
   Widget _buildOrderList(List<StaffOrder> orders, {required bool isDone}) {
     if (orders.isEmpty) {
       return const Center(child: Text('ไม่มีออเดอร์'));
@@ -164,15 +305,12 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
           onRefresh: _fetchOrders,
           url: _url,
           staffId: _staffId ?? '',
+          remainingTime: _remainingTimes[orders[i].id],
         ),
       ),
     );
   }
 }
-
-// ─────────────────────────────────────────────────────────────
-// ORDER CARD
-// ─────────────────────────────────────────────────────────────
 
 class _OrderCard extends StatelessWidget {
   final StaffOrder order;
@@ -180,32 +318,31 @@ class _OrderCard extends StatelessWidget {
   final VoidCallback onRefresh;
   final String url;
   final String staffId;
-
+  final Duration? remainingTime;
   const _OrderCard({
     required this.order,
     required this.isDone,
     required this.onRefresh,
     required this.url,
     required this.staffId,
+    required this.remainingTime,
   });
-
-  // ── Derived / helper getters ──────────────────────────────
   bool get _needsWash =>
       order.serviceType == 'wash' || order.serviceType == 'wash_dry';
   bool get _needsDry =>
       order.serviceType == 'dry' || order.serviceType == 'wash_dry';
-
-  bool get _isWaiting =>
-      order.status == 'waiting_wash' ||
-      order.status == 'waiting_dry' ||
-      order.status == 'payment_completed';
+  bool get _isWaitingForCalculate =>
+      order.status == 'waiting_wash' || order.status == 'waiting_dry';
+  bool get _isPaymentCompleted => order.status == 'payment_completed';
   bool get _isWashing => order.status == 'washing';
+  bool get _isRunning => order.status == 'washing' || order.status == 'drying';
   bool get _canUpdate =>
       !isDone &&
       order.status != 'waiting_payment' &&
       order.status != 'payment_completed';
   bool get _showStartDry => _isWashing && order.serviceType == 'wash_dry';
-
+  String get _startActionLabel =>
+      order.serviceType == 'dry' ? 'เริ่มอบ' : 'เริ่มซัก';
   String _statusText(String s) => switch (s) {
     'waiting_wash' => 'รอซัก',
     'waiting_dry' => 'รออบ',
@@ -214,9 +351,12 @@ class _OrderCard extends StatelessWidget {
     'washing' => 'กำลังซัก',
     'drying' => 'กำลังอบ',
     'waiting_delivery' => 'รอไรเดอร์ส่ง',
+    'delivery_heading_to_shop' => 'ไรเดอร์กำลังมารับผ้า',
+    'delivery_pickup_completed' => 'ไรเดอร์รับผ้าแล้ว',
+    'delivery_in_progress' => 'กำลังจัดส่ง',
+    'completed' => 'จัดส่งสำเร็จ',
     _ => s,
   };
-
   Color _statusColor(String s) => switch (s) {
     'waiting_wash' => Colors.orange,
     'waiting_dry' => Colors.orange,
@@ -225,16 +365,18 @@ class _OrderCard extends StatelessWidget {
     'washing' => Colors.blue,
     'drying' => Colors.blue,
     'waiting_delivery' => Colors.green,
+    'delivery_heading_to_shop' => Colors.blue,
+    'delivery_pickup_completed' => Colors.blue,
+    'delivery_in_progress' => Colors.blue,
+    'completed' => Colors.green,
     _ => Colors.grey,
   };
-
   String _serviceText(String t) => switch (t) {
     'wash' => 'ซักอย่างเดียว',
     'dry' => 'อบอย่างเดียว',
     'wash_dry' => 'ซัก + อบ',
     _ => t,
   };
-
   void _showUpdateBottomSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -256,21 +398,42 @@ class _OrderCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       color: Colors.white,
-      margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: const EdgeInsets.only(bottom: 10),
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: Colors.grey.shade200),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildHeaderRow(),
-            const SizedBox(height: 8),
-            if (order.customer != null) _buildCustomerInfo(order.customer!),
-            const SizedBox(height: 8),
-            _buildServiceRow(),
-            _buildMachineInfo(),
-            if (order.note != null && order.note!.isNotEmpty)
-              _buildNoteRow(order.note!),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (order.customer != null)
+                        _buildCustomerInfo(order.customer!),
+                      const SizedBox(height: 8),
+                      _buildServiceRow(),
+                      _buildMachineInfo(),
+                      if (order.note != null && order.note!.isNotEmpty)
+                        _buildNoteRow(order.note!),
+                    ],
+                  ),
+                ),
+                if (_isRunning) ...[
+                  const SizedBox(width: 12),
+                  _buildCountdown(),
+                ],
+              ],
+            ),
             const SizedBox(height: 12),
             _buildActionButton(context),
             _buildStatusBanner(),
@@ -280,7 +443,6 @@ class _OrderCard extends StatelessWidget {
     );
   }
 
-  /// เลขที่ออเดอร์ + สถานะ
   Widget _buildHeaderRow() => Row(
     mainAxisAlignment: MainAxisAlignment.spaceBetween,
     children: [
@@ -301,22 +463,32 @@ class _OrderCard extends StatelessWidget {
       ),
     ],
   );
-
-  /// ชื่อ / ที่อยู่ / เบอร์โทรลูกค้า
   Widget _buildCustomerInfo(dynamic customer) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Text(customer.name, style: const TextStyle(fontWeight: FontWeight.w500)),
       const SizedBox(height: 2),
       Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.location_on_outlined, size: 14, color: Colors.grey),
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: Icon(
+              Icons.location_on_outlined,
+              size: 14,
+              color: Colors.grey,
+            ),
+          ),
           const SizedBox(width: 4),
           Expanded(
             child: Text(
               order.address ?? '-',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
-              maxLines: 1,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.grey,
+                height: 1.3,
+              ),
+              maxLines: 3,
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -335,8 +507,6 @@ class _OrderCard extends StatelessWidget {
       ),
     ],
   );
-
-  /// บรรทัด "บริการ: ..."
   Widget _buildServiceRow() => Row(
     children: [
       const Icon(
@@ -351,16 +521,12 @@ class _OrderCard extends StatelessWidget {
       ),
     ],
   );
-
-  /// ชื่อเครื่องซัก / เครื่องอบ แสดงต่อจากบรรทัดบริการทันที (ไม่มีไอคอน)
   Widget _buildMachineInfo() {
     final washerName = _needsWash ? order.washer?.name : null;
     final dryerName = _needsDry ? order.dryer?.name : null;
-
     if (washerName == null && dryerName == null) {
       return const SizedBox.shrink();
     }
-
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Wrap(
@@ -368,9 +534,17 @@ class _OrderCard extends StatelessWidget {
         runSpacing: 6,
         children: [
           if (washerName != null)
-            _machineChip(label: 'เครื่องซัก', value: washerName, color: Colors.blue),
+            _machineChip(
+              label: 'เครื่องซัก',
+              value: washerName,
+              color: Colors.blue,
+            ),
           if (dryerName != null)
-            _machineChip(label: 'เครื่องอบ', value: dryerName, color: Colors.orange),
+            _machineChip(
+              label: 'เครื่องอบ',
+              value: dryerName,
+              color: Colors.orange,
+            ),
         ],
       ),
     );
@@ -389,15 +563,9 @@ class _OrderCard extends StatelessWidget {
     ),
     child: Text(
       '$label: $value',
-      style: TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.w600,
-        color: color,
-      ),
+      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color),
     ),
   );
-
-  /// หมายเหตุจากลูกค้า
   Widget _buildNoteRow(String note) => Padding(
     padding: const EdgeInsets.only(top: 8),
     child: Row(
@@ -416,51 +584,67 @@ class _OrderCard extends StatelessWidget {
       ],
     ),
   );
-
-  /// ปุ่มการทำงานหลัก (คำนวณราคา / เริ่มอบ / เสร็จสิ้น) ตามสถานะออเดอร์
   Widget _buildActionButton(BuildContext context) {
-    if (_isWaiting) {
+    if (_isWaitingForCalculate) {
       return SizedBox(
         width: double.infinity,
         child: ElevatedButton.icon(
           onPressed: () {
-            Get.to(() => StaffCalculateScreen(order: order.toJson()))
-                ?.then((_) => onRefresh());
+            Get.to(
+              () => StaffCalculateScreen(order: order.toJson()),
+            )?.then((_) => onRefresh());
           },
-          icon: const Icon(
-            Icons.calculate_outlined,
-            color: Colors.white,
-            size: 18,
-          ),
-          label: const Text(
-            'คำนวณราคา',
-            style: TextStyle(color: Colors.white),
-          ),
+          label: const Text('คำนวณราคา', style: TextStyle(color: Colors.white)),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.blue,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         ),
       );
     }
-
+    if (_isPaymentCompleted) {
+      return SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          onPressed: () => _callStartPaid(context),
+          icon: const Icon(
+            Icons.play_circle_outline,
+            color: Colors.white,
+            size: 18,
+          ),
+          label: Text(
+            _startActionLabel,
+            style: const TextStyle(color: Colors.white),
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.green,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
+          ),
+        ),
+      );
+    }
     if (_showStartDry) {
       return SizedBox(
         width: double.infinity,
         child: ElevatedButton.icon(
           onPressed: _showStartDryDialog,
           label: const Text(
-            'ซักเสร็จแล้ว → เริ่มอบ',
+            'ซักเสร็จแล้ว เริ่มอบ',
             style: TextStyle(color: Colors.white),
           ),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.orange,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         ),
       );
     }
-
     if (_canUpdate) {
       return SizedBox(
         width: double.infinity,
@@ -472,21 +656,65 @@ class _OrderCard extends StatelessWidget {
             size: 18,
           ),
           label: const Text(
-            'เสร็จสิ้น  พร้อมส่ง',
+            'เสร็จสิ้น พร้อมส่ง',
             style: TextStyle(color: Colors.white),
           ),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.green,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+            ),
           ),
         ),
       );
     }
-
     return const SizedBox.shrink();
   }
 
-  /// แถบแจ้งสถานะรอ/ชำระเงินแล้ว
+  Widget _buildCountdown() {
+    final totalSeconds = (remainingTime?.inSeconds ?? 0).clamp(0, 999999);
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    final timeText =
+        '${minutes.toString().padLeft(2, '0')}:'
+        '${seconds.toString().padLeft(2, '0')}';
+    final isFinished = totalSeconds == 0;
+    return Container(
+      width: 92,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F7F7),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            isFinished
+                ? 'ครบเวลา'
+                : order.status == 'washing'
+                ? 'เวลาซัก'
+                : 'เวลาอบ',
+            style: TextStyle(
+              fontSize: 11,
+              color: isFinished ? Colors.red.shade700 : Colors.grey.shade700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            timeText,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              color: isFinished ? Colors.red.shade700 : const Color(0xFF222222),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStatusBanner() {
     if (order.status == 'waiting_payment') {
       return _banner(text: 'รอลูกค้าชำระเงิน', color: Colors.red);
@@ -512,153 +740,229 @@ class _OrderCard extends StatelessWidget {
       style: TextStyle(color: color, fontSize: 13),
     ),
   );
-
-  // ── Start-dry confirmation dialog ─────────────────────────
+  Future<void> _callStartPaid(BuildContext context) async {
+    try {
+      final res = await http.put(
+        Uri.parse('$url/order/staff/start_paid/${order.id}'),
+        headers: {'Content-Type': 'application/json'},
+        body: '{"staff_id":"$staffId"}',
+      );
+      final body = updateStatusResponseFromJson(res.body);
+      final ok = res.statusCode == 200;
+      if (ok) {
+        onRefresh();
+      }
+      showStatusSnackbar(message: body.message, success: ok);
+    } catch (e) {
+      showStatusSnackbar(message: 'เกิดข้อผิดพลาด: $e', success: false);
+    }
+  }
 
   void _showStartDryDialog() {
     final dryer = order.dryer;
-
     Get.dialog(
       Dialog(
-        backgroundColor: const Color(0xFFF8F9FA),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.orange.shade50,
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.local_laundry_service_outlined,
-                  color: Colors.orange,
-                  size: 32,
-                ),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'เริ่มอบผ้า',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'ซักเสร็จแล้ว พร้อมเริ่มอบ?\nเครื่องซักจะถูกปล่อยว่างทันที',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: Colors.black54,
-                  height: 1.6,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: Colors.orange.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.orange.shade200),
-                ),
-                child: dryer == null
-                    ? const Text(
-                        'ไม่พบข้อมูลเครื่องอบ',
-                        style: TextStyle(color: Colors.grey, fontSize: 13),
-                      )
-                    : Column(
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: Color(0xFFE6F3FF),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.local_laundry_service_rounded,
+                        color: Color(0xFF0593FF),
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.inventory_2_outlined,
-                                size: 16,
-                                color: Colors.orange,
-                              ),
-                              const SizedBox(width: 8),
-                              Text(
-                                dryer.name,
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black87,
-                                ),
-                              ),
-                            ],
+                          Text(
+                            'เริ่มอบผ้า',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.grey.shade900,
+                            ),
                           ),
-                          const SizedBox(height: 10),
-                          const Divider(height: 1),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              _infoChip(
-                                icon: Icons.scale_outlined,
+                          const SizedBox(height: 2),
+                          Text(
+                            'ซักเสร็จแล้ว พร้อมเริ่มอบ',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey.shade500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              if (dryer == null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      'ไม่พบข้อมูลเครื่องอบ',
+                      style: TextStyle(
+                        color: Colors.grey.shade500,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                )
+              else
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade200),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          dryer.name,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.grey.shade900,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _statColumn(
                                 label: 'ความจุ',
                                 value: dryer.capacity != null
                                     ? '${dryer.capacity} kg'
                                     : '-',
                               ),
-                              const SizedBox(width: 10),
-                              _infoChip(
-                                icon: Icons.timer_outlined,
+                            ),
+                            Container(
+                              width: 1,
+                              height: 30,
+                              color: Colors.grey.shade200,
+                            ),
+                            Expanded(
+                              child: _statColumn(
                                 label: 'เวลาอบ',
                                 value: dryer.workMinutes != null
                                     ? '${dryer.workMinutes} นาที'
                                     : '-',
                               ),
-                            ],
-                          ),
-                        ],
-                      ),
-              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: Column(
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          Get.back();
+                          await _callStartDry();
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Color(0xFF0593FF),
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'เริ่มอบผ้า',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    TextButton(
                       onPressed: () => Get.back(),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        side: const BorderSide(color: Colors.grey),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
                       ),
-                      child: const Text(
+                      child: Text(
                         'ยกเลิก',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () async {
-                        Get.back();
-                        await _callStartDry();
-                      },
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        backgroundColor: Colors.orange,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
                         ),
                       ),
-                      child: const Text(
-                        'ยืนยัน',
-                        style: TextStyle(color: Colors.white),
-                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _statColumn({required String label, required String value}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(fontSize: 11.5, color: Colors.grey.shade500),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w700,
+            color: Colors.grey.shade900,
+          ),
+        ),
+      ],
     );
   }
 
@@ -701,80 +1005,47 @@ class _OrderCard extends StatelessWidget {
     );
   }
 
-  /// เรียก API เปลี่ยนสถานะเป็น "drying" แล้วแจ้งผลด้วย GetX snackbar
-  /// (เดิมใช้ ScaffoldMessenger ซึ่งอาจ error ถ้าไม่มี Scaffold ครอบ context นั้น ๆ
-  /// เปลี่ยนมาใช้ Get.snackbar ให้สอดคล้องกับจุดอื่นในไฟล์)
   Future<void> _callStartDry() async {
     try {
       final res = await http.put(
-        Uri.parse('$url/order/staff/update/status/staff/${order.id}'),
+        Uri.parse('$url/order/staff/update/status/${order.id}'),
         headers: {'Content-Type': 'application/json'},
         body: updateStatusRequestToJson(
           UpdateStatusRequest(staffId: staffId, status: 'drying'),
         ),
       );
-
       final response = updateStatusResponseFromJson(res.body);
       final success = res.statusCode == 200;
       if (success) onRefresh();
-
-      _showSimpleSnackbar(
-        message: response.message,
-        success: success,
-      );
+      showStatusSnackbar(message: response.message, success: success);
     } catch (e) {
-      _showSimpleSnackbar(
-        message: 'เกิดข้อผิดพลาด: $e',
-        success: false,
-      );
+      showStatusSnackbar(message: 'เกิดข้อผิดพลาด: $e', success: false);
     }
   }
-
-  void _showSimpleSnackbar({required String message, required bool success}) {
-    Get.snackbar(
-      success ? 'สำเร็จ' : 'ผิดพลาด',
-      message,
-      snackPosition: SnackPosition.TOP,
-      backgroundColor: success ? Colors.green : Colors.red,
-      colorText: Colors.white,
-      margin: const EdgeInsets.all(12),
-      borderRadius: 10,
-      duration: const Duration(seconds: 3),
-    );
-  }
 }
-
-// ─────────────────────────────────────────────────────────────
-// UPDATE STATUS BOTTOM SHEET
-// ─────────────────────────────────────────────────────────────
 
 class _UpdateStatusSheet extends StatefulWidget {
   final StaffOrder order;
   final String url;
   final String staffId;
   final VoidCallback onSuccess;
-
   const _UpdateStatusSheet({
     required this.order,
     required this.url,
     required this.staffId,
     required this.onSuccess,
   });
-
   @override
   State<_UpdateStatusSheet> createState() => _UpdateStatusSheetState();
 }
 
 class _UpdateStatusSheetState extends State<_UpdateStatusSheet> {
   bool _isSubmitting = false;
-
   Future<void> _submit() async {
     setState(() => _isSubmitting = true);
     try {
       final res = await http.put(
-        Uri.parse(
-          '${widget.url}/order/staff/update/status/staff/${widget.order.id}',
-        ),
+        Uri.parse('${widget.url}/order/staff/update/status/${widget.order.id}'),
         headers: {'Content-Type': 'application/json'},
         body: updateStatusRequestToJson(
           UpdateStatusRequest(
@@ -783,154 +1054,23 @@ class _UpdateStatusSheetState extends State<_UpdateStatusSheet> {
           ),
         ),
       );
-
       final response = updateStatusResponseFromJson(res.body);
       if (!mounted) return;
-
       if (res.statusCode == 200) {
         Navigator.pop(context);
         widget.onSuccess();
-        _showSuccessSnackbar(response.message);
+        showStatusSnackbar(message: response.message, success: true);
       } else {
-        _showErrorSnackbar(response.message);
+        showStatusSnackbar(message: response.message, success: false);
       }
     } catch (e) {
-      if (mounted) _showErrorSnackbar('เกิดข้อผิดพลาด: $e');
+      if (mounted) {
+        showStatusSnackbar(message: 'เกิดข้อผิดพลาด: $e', success: false);
+      }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
   }
-
-  /// แจ้งเตือนสำเร็จ (สไตล์การ์ดเขียว ไล่เฉด)
-  void _showSuccessSnackbar(String message) {
-    Future.microtask(() {
-      if (Get.context == null) return;
-      Get.closeAllSnackbars();
-
-      Get.snackbar(
-        '',
-        '',
-        snackPosition: SnackPosition.BOTTOM,
-        backgroundColor: Colors.transparent,
-        barBlur: 0,
-        overlayBlur: 0,
-        snackStyle: SnackStyle.FLOATING,
-        margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        padding: EdgeInsets.zero,
-        borderRadius: 18,
-        duration: const Duration(seconds: 3),
-        isDismissible: true,
-        dismissDirection: DismissDirection.horizontal,
-        messageText: _statusSnackbarContent(
-          title: 'สำเร็จ',
-          message: message,
-          colors: const [Color(0xFF22C55E), Color(0xFF16A34A)],
-          shadowColor: Colors.green,
-          icon: Icons.check_rounded,
-        ),
-      );
-    });
-  }
-
-  /// แจ้งเตือนผิดพลาด (สไตล์เดียวกัน แต่โทนแดง) — ก่อนหน้านี้ error กรณีนี้ใช้ showDialog
-  /// ซึ่งไม่สอดคล้องกับ success ที่ใช้ snackbar ทำให้ประสบการณ์ไม่เนียน
-  /// เปลี่ยนให้ error ใช้ Get.snackbar เหมือนกันเพื่อความสม่ำเสมอ
-  void _showErrorSnackbar(String message) {
-    Future.microtask(() {
-      if (Get.context == null) return;
-      Get.closeAllSnackbars();
-
-      Get.snackbar(
-        '',
-        '',
-        snackPosition: SnackPosition.BOTTOM,
-        backgroundColor: Colors.transparent,
-        barBlur: 0,
-        overlayBlur: 0,
-        snackStyle: SnackStyle.FLOATING,
-        margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        padding: EdgeInsets.zero,
-        borderRadius: 18,
-        duration: const Duration(seconds: 3),
-        isDismissible: true,
-        dismissDirection: DismissDirection.horizontal,
-        messageText: _statusSnackbarContent(
-          title: 'ผิดพลาด',
-          message: message,
-          colors: const [Color(0xFFEF4444), Color(0xFFDC2626)],
-          shadowColor: Colors.red,
-          icon: Icons.close_rounded,
-        ),
-      );
-    });
-  }
-
-  /// การ์ดเนื้อหาแจ้งเตือน ใช้ร่วมกันทั้งสำเร็จ/ผิดพลาด แค่เปลี่ยนสีกับข้อความ
-  Widget _statusSnackbarContent({
-    required String title,
-    required String message,
-    required List<Color> colors,
-    required Color shadowColor,
-    required IconData icon,
-  }) => Container(
-    decoration: BoxDecoration(
-      gradient: LinearGradient(
-        colors: colors,
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ),
-      borderRadius: BorderRadius.circular(18),
-      boxShadow: [
-        BoxShadow(
-          color: shadowColor.withValues(alpha: 0.22),
-          blurRadius: 18,
-          offset: const Offset(0, 8),
-        ),
-      ],
-    ),
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.18),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon, color: Colors.white, size: 24),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  message,
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.95),
-                    fontSize: 13,
-                    height: 1.35,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
 
   @override
   Widget build(BuildContext context) {

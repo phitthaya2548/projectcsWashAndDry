@@ -98,8 +98,23 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
         _controllers['licensePlate']!.text = rider.licensePlate;
 
         setState(() {
-          _vehicleType =
-              rider.vehicleType.isNotEmpty ? rider.vehicleType : 'มอเตอร์ไซค์';
+          // Backend เก็บ vehicle_type เป็นภาษาอังกฤษ
+          // แต่หน้า UI ยังคงแสดงเป็นภาษาไทย
+          switch (rider.vehicleType.toLowerCase()) {
+            case 'motorcycle':
+            case 'motorbike':
+            case 'จักรยานยนต์':
+            case 'มอเตอร์ไซค์':
+              _vehicleType = 'มอเตอร์ไซค์';
+              break;
+            case 'car':
+            case 'รถยนต์':
+              _vehicleType = 'รถยนต์';
+              break;
+            default:
+              _vehicleType = 'มอเตอร์ไซค์';
+          }
+
           _profileImageUrl = rider.profileImage;
         });
       } else {
@@ -242,11 +257,15 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
     setState(() => _isLoading = true);
 
     try {
+      // หน้าแอปแสดงภาษาไทย แต่ส่ง vehicle_type ไป Backend เป็นภาษาอังกฤษ
+      final backendVehicleType =
+          _vehicleType == 'มอเตอร์ไซค์' ? 'motorcycle' : 'car';
+
       final req = UpdateRiderRequest(
         email: _controllers['email']!.text.trim(),
         fullname: _controllers['fullName']!.text.trim(),
         phone: _controllers['phone']!.text.trim(),
-        vehicleType: _vehicleType,
+        vehicleType: backendVehicleType,
         licensePlate: _controllers['licensePlate']!.text.trim(),
       );
 

@@ -13,7 +13,6 @@ const Color kPrimaryBlueDark = Color(0xFF0476D9);
 const Color kInk = Color(0xFF1A1A1A);
 const String pending_confirmation = 'pending_confirmation';
 
-
 const Map<String, String> _serviceLabels = {
   'wash': 'ซักผ้าอย่างเดียว',
   'dry': 'อบผ้าอย่างเดียว',
@@ -116,11 +115,15 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
 
       final body = json.decode(res.body) as Map<String, dynamic>;
       final ok = body['ok'] == true;
-      _showSnack(
-        body['message']?.toString() ?? (ok ? 'รับออเดอร์สำเร็จ' : 'เกิดข้อผิดพลาด'),
-        ok ? const Color(0xFF34C759) : Colors.orange,
-      );
-      if (ok && mounted) Get.back(result: true);
+      final message = body['message']?.toString() ?? (ok ? 'รับออเดอร์สำเร็จ' : 'เกิดข้อผิดพลาด');
+
+      if (ok) {
+        if (mounted) Get.back(result: true);
+        await Future.delayed(const Duration(milliseconds: 300));
+        _showSnack(message, const Color(0xFF34C759));
+      } else {
+        _showSnack(message, Colors.orange);
+      }
     } on TimeoutException {
       _showSnack('เซิร์ฟเวอร์ช้า กรุณาลองใหม่', Colors.red);
     } catch (e) {
@@ -156,11 +159,15 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
 
       final body = json.decode(res.body) as Map<String, dynamic>;
       final ok = body['ok'] == true;
-      _showSnack(
-        body['message']?.toString() ?? (ok ? 'ยกเลิกออเดอร์สำเร็จ' : 'เกิดข้อผิดพลาด'),
-        ok ? const Color(0xFF34C759) : Colors.orange,
-      );
-      if (ok && mounted) Get.back(result: true);
+      final message = body['message']?.toString() ?? (ok ? 'ยกเลิกออเดอร์สำเร็จ' : 'เกิดข้อผิดพลาด');
+
+      if (ok) {
+        if (mounted) Get.back(result: true);
+        await Future.delayed(const Duration(milliseconds: 300));
+        _showSnack(message, const Color(0xFF34C759));
+      } else {
+        _showSnack(message, Colors.orange);
+      }
     } on TimeoutException {
       _showSnack('เซิร์ฟเวอร์ช้า กรุณาลองใหม่', Colors.red);
     } catch (e) {
@@ -276,8 +283,6 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
   }
 
   void _showSnack(String msg, Color color) {
-    if (!mounted) return;
-
     final isSuccess = color == const Color(0xFF34C759);
     final isError = color == Colors.red;
     final icon = isSuccess
@@ -462,7 +467,6 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
                     title: 'รายละเอียดบริการ',
                     children: [
                       _InfoRow(label: 'ประเภทบริการ', value: serviceLabel),
-                      _InfoRow(label: 'น้ำหนักผ้า', value: '${order['wash_dry_weight'] ?? 0} กก.'),
                       _InfoRow(
                         label: 'น้ำยาซัก',
                         value: order['detergent_option'] == 'no_detergent'
@@ -478,7 +482,7 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
                     const SizedBox(height: 14),
                     _buildImagesCard(beforeImg, afterImg),
                   ],
-                  // เผื่อพื้นที่ด้านล่างไม่ให้เนื้อหาโดนแถบปุ่มบัง
+
                   SizedBox(height: _canShowActions ? 12 : 24),
                 ],
               ),
@@ -566,7 +570,6 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
     );
   }
 
-
   Widget _buildBottomActions() {
     final busy = _isAccepting || _isCancelling;
     return SafeArea(
@@ -626,9 +629,7 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
     );
   }
 
- 
   Widget _buildCustomerCard(Map<String, dynamic> order) {
-
     final profileImage = order['customer_profile_image']?.toString() ?? '';
     final fullname = order['customer_fullname']?.toString() ?? '-';
     final phone = order['customer_phone']?.toString() ?? '';

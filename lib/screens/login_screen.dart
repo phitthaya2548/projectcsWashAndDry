@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:developer';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
@@ -58,7 +59,53 @@ class _LoginScreenState extends State<LoginScreen> {
     _password.dispose();
     super.dispose();
   }
+Future<void> _registerFCMToken({
+  required String userId,
+  required String role,
+}) async {
 
+  try {
+
+    String? token =
+        await FirebaseMessaging.instance.getToken();
+
+
+    if(token == null){
+
+      log(" FCM Token ไม่มี");
+
+      return;
+
+    }
+    log("FCM TOKEN : $token");
+    final response = await http.post(
+      Uri.parse(
+        '$url/notification/register'
+      ),
+      headers: {
+        'Content-Type':'application/json'
+      },
+      body: jsonEncode({
+        "user_id": userId,
+        "user_role": role,
+        "token": token,
+      }),
+
+    );
+
+    log(
+      "FCM Register : ${response.body}"
+    );
+
+  } catch(e){
+
+    log(
+      "FCM Register Error : $e"
+    );
+
+  }
+
+}
   Future<void> _login() async {
     FocusScope.of(context).unfocus();
     if (!_formKey.currentState!.validate()) return;
@@ -107,25 +154,63 @@ final staffId = data['staff_id']?.toString();
           [];
           log("testgoogleid"+googleId.toString());
           log('$profileImage');
+          log("store_id: ${data['store_id']?.toString() ?? ""}");
       log("Login response: $data");
       log("fullname: $fullname, email: $email, phone: $phone, profileImage: $profileImage, profileComplete: $profileComplete, addressComplete: $addressComplete, missingFields: $missingFields");
       log("Parsed role: $role, customerId: $customerId, storeId: $storeId, riderId: $riderId, staffId: $staffId");
       await Session().clear();
 await Session().saveLogin(
   role: role,
-  storeId: (role == 'store' || role == 'rider' || role == 'laundry_staff')
-      ? storeId
-      : null,
+  storeId:  storeId,
   customerId: role == 'customer' ? customerId : null,
+
   riderId: role == 'rider' ? riderId : null,
   staffId: role == 'laundry_staff' ? staffId : null,
-  status: (role == 'rider' || role == 'laundry_staff' || role == 'store') ? status : null,
+  status:  status,
   fullname: fullname,
   profileImage: profileImage,
   phone: phone,
   googleId: googleId,
 );
+final checkStatus = await Session().getStatus();
+log(" CHECK right after save: status = '$checkStatus'");
+String? userId;
 
+
+if(role == "customer"){
+
+  userId = customerId;
+
+}
+
+else if(role == "store"){
+
+  userId = storeId;
+
+}
+
+else if(role == "rider"){
+
+  userId = riderId;
+
+}
+
+else if(role == "laundry_staff"){
+
+  userId = staffId;
+
+}
+
+
+
+if(userId != null && userId!.isNotEmpty){
+
+  _registerFCMToken(
+  userId:userId!,
+  role:role,
+);
+
+}
       if (!mounted) return;
 
       final displayName = role == 'store' ? storeName : fullname;
@@ -143,7 +228,7 @@ await Session().saveLogin(
           profileImage: profileImage,
         );
       } else if (role == 'store') {
-        _handleStoreLogin(storeId: storeId, profileComplete: profileComplete);
+        _handleStoreLogin(storeId: storeId, status:status);
       }
       else if (role == 'rider') {
   if (storeId == null || storeId.isEmpty || status == 'pending') {
@@ -254,7 +339,19 @@ if (connectivity == ConnectivityResult.none) {
         phone: '',
         googleId: idToken
       );
+      if(role == "customer" &&
+   customerId != null &&
+   customerId.isNotEmpty){
 
+  await _registerFCMToken(
+
+    userId:customerId,
+
+    role:role,
+
+  );
+
+}
       if (!mounted) return;
 
       _showSuccess('ยินดีต้อนรับ $fullname');
@@ -328,13 +425,13 @@ if (connectivity == ConnectivityResult.none) {
 
   void _handleStoreLogin({
     required String? storeId,
-    required bool profileComplete,
+    required String? status
   }) {
     if (storeId == null || storeId.isEmpty) {
       throw Exception('ไม่พบข้อมูลร้านค้า');
     }
 
-    if (!profileComplete) {
+    if (status == 'PENDING') {
       Get.to(() => StoreOnboardingScreen(storeId: storeId));
       return;
     }

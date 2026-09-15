@@ -99,43 +99,53 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
     return DateFormat('d MMM yyyy  เวลา HH:mm น.', 'th').format(dt);
   }
 
-  String _statusLabel(String s) =>
-      {
-        'waiting_pickup': 'รอรับผ้า',
-        'pickup_in_progress': 'กำลังไปรับผ้า',
-        'pickup_completed': 'กำลังเดินทางไปร้าน',
-        'waiting_wash': 'รอซัก',
-        'washing': 'กำลังซักผ้า',
-        'waiting_dry': 'รออบผ้า',
-        'drying': 'กำลังอบผ้า',
-        'waiting_delivery': 'รอส่งผ้า',
-        'store_pickup_in_progress': 'กำลังไปรับผ้าที่ร้าน',
-        'delivery_in_progress': 'กำลังจัดส่ง',
-        'completed': 'เสร็จสิ้น',
-        'cancelled': 'ยกเลิก',
-      }[s] ??
-      s;
+   String _statusLabel(String s) =>
+    {
+      'waiting_payment': 'รอชำระเงิน',
+      'payment_completed': 'ชำระเงินแล้ว',
+      'waiting_pickup': 'รอรับผ้า',
+      'pickup_in_progress': 'กำลังไปรับผ้า',
+      'pickup_completed': 'รับผ้าเรียบร้อยกำลังไปที่ร้าน',
+      'arrived_at_shop': 'มาถึงร้านแล้ว',
+      'waiting_wash': 'รอซัก',
+      'washing': 'กำลังซักผ้า',
+      'waiting_dry': 'รออบผ้า',
+      'drying': 'กำลังอบผ้า',
+      'waiting_delivery': 'รอส่งผ้า',
+      'delivery_heading_to_shop': 'กำลังไปรับผ้าที่ร้าน',
+      'delivery_pickup_completed': 'รับผ้าที่ร้านแล้ว',
+      'delivery_in_progress': 'กำลังจัดส่ง',
+      'completed': 'เสร็จสิ้น',
+      'cancelled': 'ยกเลิก',
+    }[s] ??
+    s;
 
-  IconData _statusIcon(String s) =>
-      {
-        'waiting_pickup': Icons.access_time_rounded,
-        'pickup_in_progress': Icons.delivery_dining_rounded,
-        'pickup_completed': Icons.store_rounded,
-        'waiting_wash': Icons.hourglass_top_rounded,
-        'washing': Icons.local_laundry_service_rounded,
-        'waiting_dry': Icons.local_laundry_service_rounded,
-        'drying': Icons.local_laundry_service_rounded,
-        'waiting_delivery': Icons.inventory_2_rounded,
-        'store_pickup_in_progress': Icons.store_rounded,
-        'delivery_in_progress': Icons.delivery_dining_rounded,
-        'completed': Icons.check_circle_rounded,
-        'cancelled': Icons.cancel_rounded,
-      }[s] ??
-      Icons.circle;
+IconData _statusIcon(String s) =>
+    {
 
+      'waiting_payment': Icons.payment_rounded,
+      'payment_completed': Icons.check_circle_rounded,
+      'waiting_pickup': Icons.access_time_rounded,
+      'pickup_in_progress': Icons.two_wheeler_rounded,
+      'pickup_completed': Icons.task_alt_rounded,
+      'arrived_at_shop': Icons.store_rounded,
+      'waiting_wash': Icons.hourglass_top_rounded,
+      'washing': Icons.local_laundry_service_rounded,
+      'waiting_dry': Icons.hourglass_bottom_rounded,
+      'drying': Icons.dry_cleaning_rounded,
+      'waiting_delivery': Icons.inventory_2_rounded,
+      'delivery_heading_to_shop': Icons.store_rounded,
+      'delivery_pickup_completed': Icons.checkroom_rounded,
+      'delivery_in_progress': Icons.two_wheeler_rounded,
+      'completed': Icons.check_circle_rounded,
+      'cancelled': Icons.cancel_rounded,
+    }[s] ??
+    Icons.circle;
   Color _statusColor(String s) {
     if (s == 'cancelled') return Colors.red;
     if (s == 'completed') return Colors.green;
+    if (s == 'payment_completed') return Colors.green;
+    if (s == 'waiting_payment') return Colors.orange;
     return const Color(0xFF29ABE2);
   }
 
@@ -263,10 +273,15 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
                           fontWeight: FontWeight.bold,
                           color: mainColor,
                         ),
+                        // FIX: long status labels (e.g. "รับผ้าเรียบร้อยกำลังไปที่ร้าน")
+                        // could overflow this constrained row — allow wrap/ellipsis.
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(width: 8),
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -355,6 +370,8 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
     final price = (o['service_price'] ?? 0).toDouble();
     final delivery = (o['delivery_price'] ?? 0).toDouble();
     final status = o['status'] as String? ?? '';
+    final detergentPrice = (o['detergent_price'] as num? ?? 0).toDouble();
+    final total = price + delivery + detergentPrice;
 
     final serviceMap = {
       'wash_dry': 'ซักและอบ',
@@ -481,27 +498,37 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
             Column(
               children: [
                 _row('ค่าซัก', '${price.toInt()} ฿'),
+                _row('ค่าน้ำยาซักผ้า', '${detergentPrice.toInt()} ฿'),
                 _row('ค่าจัดส่ง', '${delivery.toInt()} ฿'),
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 8),
                   child: Divider(height: 1, color: Color(0xFFE2E8F0)),
                 ),
+                // FIX: this was the actual overflow bug — the label had a typo
+                // with a long run of extra "ก" characters, and the Row wasn't
+                // wrapped in Flexible/Expanded so it pushed 11px past the edge.
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'ราคารวมทั้งหมด',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
+                    const Flexible(
+                      child: Text(
+                        'ราคารวมทั้งหมด',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
                       ),
                     ),
-                    Text(
-                      '${price + delivery} ฿',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 18,
-                        color: Color(0xFF29ABE2),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        '${total.toInt()} ฿',
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 18,
+                          color: Color(0xFF29ABE2),
+                        ),
                       ),
                     ),
                   ],
@@ -643,6 +670,7 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
     Map<String, dynamic> data,
   ) =>
       Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           CircleAvatar(
             radius: 24,
@@ -674,55 +702,74 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
                     fontSize: 14,
                     color: Color(0xFF1A1A2E),
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 3),
-                Row(
+                // FIX: phone + license plate + vehicle type used to sit in one
+                // fixed Row and could overflow on narrow screens / long values.
+                // Wrap lets items flow onto a new line instead of clipping.
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    Icon(
-                      Icons.phone_rounded,
-                      size: 12,
-                      color: Colors.grey.shade400,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      data['phone']?.toString() ?? '-',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade500,
-                      ),
-                    ),
-                    if (data['license_plate'] != null) ...[
-                      const SizedBox(width: 8),
-                      Icon(
-                        Icons.confirmation_number_outlined,
-                        size: 12,
-                        color: Colors.grey.shade400,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'ทะเบียนรถ ${data['license_plate']}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey.shade500,
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.phone_rounded,
+                          size: 12,
+                          color: Colors.grey.shade400,
                         ),
-                      ),
-                    ],
-                    if (data['vehicle_type'] != null) ...[
-                      const SizedBox(width: 8),
-                      Icon(
-                        Icons.directions_car_rounded,
-                        size: 12,
-                        color: Colors.grey.shade400,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        data['vehicle_type'].toString(),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey.shade500,
+                        const SizedBox(width: 4),
+                        Text(
+                          data['phone']?.toString() ?? '-',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade500,
+                          ),
                         ),
+                      ],
+                    ),
+                    if (data['license_plate'] != null)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.confirmation_number_outlined,
+                            size: 12,
+                            color: Colors.grey.shade400,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            'ทะเบียนรถ ${data['license_plate']}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade500,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    if (data['vehicle_type'] != null)
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.directions_car_rounded,
+                            size: 12,
+                            color: Colors.grey.shade400,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            data['vehicle_type'].toString(),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey.shade500,
+                            ),
+                          ),
+                        ],
+                      ),
                   ],
                 ),
               ],

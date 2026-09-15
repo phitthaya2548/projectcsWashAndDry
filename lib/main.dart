@@ -2,23 +2,28 @@ import 'dart:async';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:wash_and_dry/screens/splash_gate.dart';
+import 'package:wash_and_dry/service/notification_service.dart';
 import 'firebase_options.dart';
 import 'package:intl/date_symbol_data_local.dart';
+
 Future<void> main() async {
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
-        
-  await initializeDateFormatting('th');
+
+    await initializeDateFormatting('th');
     try {
-      
       await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
       await FirebaseAppCheck.instance.activate(
         androidProvider: AndroidProvider.debug,
         appleProvider: AppleProvider.debug,
       );
+
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+      await NotificationService().initialize();
       runApp(const MyApp());
     } catch (e) {
       runApp(MaterialApp(
@@ -31,13 +36,12 @@ Future<void> main() async {
     }
   }, (error, stack) => debugPrint('Error: $error'));
 }
-
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    const primaryBlue = Color(0xFF0593FF);
+    const primaryBlue = Color(0xFF0EA5E9);
     final base = ThemeData.light();
 
     return GetMaterialApp(

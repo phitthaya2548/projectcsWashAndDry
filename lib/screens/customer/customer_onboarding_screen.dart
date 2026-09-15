@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:get/get.dart';
@@ -43,10 +44,10 @@ class CustomerOnboardingScreen extends StatefulWidget {
 class _CustomerOnboardingScreenState extends State<CustomerOnboardingScreen> {
   final _formKey = GlobalKey<FormState>();
   
-  static const primaryBlue = Color(0xFF1279E6);
+  static const primaryBlue = Color(0xFF0593FF);
   static const lightBlue = Color(0xFFE3F2FD);
 
-  // Controllers
+  
   final fullnameCtl = TextEditingController();
   final phoneCtl = TextEditingController();
   final emailCtl = TextEditingController();
@@ -103,6 +104,205 @@ class _CustomerOnboardingScreenState extends State<CustomerOnboardingScreen> {
   }
 
   String? _required(String? v) => (v?.trim().isEmpty ?? true) ? "จำเป็นต้องกรอก" : null;
+
+  DateTime _birthdayInitialDate() {
+    final parsed = DateTime.tryParse(birthdayCtl.text.trim());
+    final now = DateTime.now();
+    final fallback = DateTime(now.year - 25, now.month, now.day);
+    if (parsed == null) return fallback;
+    if (parsed.isAfter(now)) return now;
+    if (parsed.isBefore(DateTime(1900, 1, 1))) return DateTime(1900, 1, 1);
+    return parsed;
+  }
+
+  String _formatBirthday(DateTime date) {
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  }
+
+  String _displayBirthday(DateTime date) {
+    const months = [
+      '',
+      'มกราคม',
+      'กุมภาพันธ์',
+      'มีนาคม',
+      'เมษายน',
+      'พฤษภาคม',
+      'มิถุนายน',
+      'กรกฎาคม',
+      'สิงหาคม',
+      'กันยายน',
+      'ตุลาคม',
+      'พฤศจิกายน',
+      'ธันวาคม',
+    ];
+    return '${date.day} ${months[date.month]} ${date.year + 543}';
+  }
+
+  Future<void> _selectBirthday() async {
+    final now = DateTime.now();
+    final minimumDate = DateTime(1900, 1, 1);
+    final initialDate = _birthdayInitialDate();
+
+    final result = await showModalBottomSheet<DateTime>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black.withOpacity(0.35),
+      builder: (sheetContext) {
+        DateTime selectedDate = initialDate;
+
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              top: false,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD9E1E8),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          child: const Text(
+                            'ยกเลิก',
+                            style: TextStyle(
+                              color: Color(0xFF64748B),
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const Expanded(
+                          child: Text(
+                            'เลือกวันเกิด',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Color(0xFF1A1A2E),
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => Navigator.pop(sheetContext, selectedDate),
+                          child: const Text(
+                            'ตกลง',
+                            style: TextStyle(
+                              color: primaryBlue,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(top: 4, bottom: 10),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: lightBlue,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(
+                            Icons.cake_outlined,
+                            size: 20,
+                            color: primaryBlue,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            _displayBirthday(selectedDate),
+                            style: const TextStyle(
+                              color: Color(0xFF1A1A2E),
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(
+                      height: 230,
+                      child: CupertinoTheme(
+                        data: const CupertinoThemeData(
+                          textTheme: CupertinoTextThemeData(
+                            dateTimePickerTextStyle: TextStyle(
+                              color: Color(0xFF1A1A2E),
+                              fontSize: 20,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        child: CupertinoDatePicker(
+                          mode: CupertinoDatePickerMode.date,
+                          initialDateTime: initialDate,
+                          minimumDate: minimumDate,
+                          maximumDate: now,
+                          dateOrder: DatePickerDateOrder.dmy,
+                          onDateTimeChanged: (value) {
+                            setSheetState(() {
+                              selectedDate = value;
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(sheetContext, selectedDate),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: primaryBlue,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: const Text(
+                          'ยืนยันวันเกิด',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (result == null) return;
+
+    setState(() {
+      birthdayCtl.text = _formatBirthday(result);
+    });
+  }
 
   Future<File> _persistImage(XFile x) async {
     final dir = await getApplicationDocumentsDirectory();
@@ -405,13 +605,25 @@ class _CustomerOnboardingScreenState extends State<CustomerOnboardingScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: primaryBlue,
-        automaticallyImplyLeading: false,
-        title: const Text("กรอกข้อมูลก่อนใช้งาน",style: TextStyle(color: Colors.white),),
-        centerTitle: true,
+      appBar:  AppBar(
+    elevation: 0,
+    automaticallyImplyLeading: false,
+    flexibleSpace: Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF0593FF), Color(0xFF0476D9)],
+        ),
       ),
+    ),
+    title: const Text(
+      "กรอกข้อมูลก่อนใช้งาน",
+      style: TextStyle(color: Colors.white),
+    ),
+    centerTitle: true,
+  ),
+
       body: !_configLoaded
         ? const Center(child: CircularProgressIndicator())
         : Form(
@@ -497,19 +709,7 @@ class _CustomerOnboardingScreenState extends State<CustomerOnboardingScreen> {
                   const SizedBox(height: 16),
                   
                   GestureDetector(
-                    onTap: () async {
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: DateTime.now().subtract(const Duration(days: 365 * 25)),
-                        firstDate: DateTime(1900),
-                        lastDate: DateTime.now());
-                      if (picked != null) {
-                        setState(() {
-                          birthdayCtl.text =
-                            "${picked.year}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}";
-                        });
-                      }
-                    },
+                    onTap: _selectBirthday,
                     child: AbsorbPointer(
                       child: _buildTextField(
                         controller: birthdayCtl,

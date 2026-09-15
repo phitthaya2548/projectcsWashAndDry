@@ -19,20 +19,35 @@ class MainShellStaff extends StatefulWidget {
 class _MainShellState extends State<MainShellStaff> {
   int _index = 0;
 
-  final _pages = const [
-    StaffHomeScreen(),
-    StaffHistoryScreen(),
-    StaffProfileScreen(),
+  late final List<Widget> _pages;
 
-  ];
+  @override
+  void initState() {
+    super.initState();
+
+    _pages = const [
+      StaffHomeScreen(),
+      StaffHistoryScreen(),
+      StaffProfileScreen(),
+    ];
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _pages[_index],
+      body: IndexedStack(
+        index: _index,
+        children: _pages,
+      ),
       bottomNavigationBar: AppBottomNav(
         currentIndex: _index,
-        onChanged: (i) => setState(() => _index = i),
+        onChanged: (i) {
+          if (_index == i) return;
+
+          setState(() {
+            _index = i;
+          });
+        },
       ),
     );
   }

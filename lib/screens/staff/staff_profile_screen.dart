@@ -326,7 +326,6 @@ class _StaffProfileScreenState extends State<StaffProfileScreen> {
                       ),
                     ),
                   ),
-                  _buildCircleBtn(Icons.notifications_none_rounded, () {}),
                 ],
               ),
             ),

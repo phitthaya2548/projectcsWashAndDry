@@ -8,9 +8,14 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:wash_and_dry/config/config.dart';
+import 'package:wash_and_dry/models/res/customer/res_order_completed_customer.dart';
+import 'package:wash_and_dry/models/res/customer/store/res_list_register_employee_store.dart';
 import 'package:wash_and_dry/models/res/customer/store/res_profile_store.dart';
+import 'package:wash_and_dry/screens/store/manage_store/store_manage_employee_screen.dart';
+import 'package:wash_and_dry/screens/store/manage_store/store_managemachine_screen.dart';
 import 'package:wash_and_dry/screens/store/store_befororder_detail_screen.dart';
 import 'package:wash_and_dry/screens/store/store_new_order_screen.dart';
+import 'package:wash_and_dry/screens/store/store_review_screen.dart';
 
 import 'package:wash_and_dry/service/session_service.dart';
 import 'package:wash_and_dry/widgets/appbarstore.dart';
@@ -30,10 +35,6 @@ const List<String> kOrderStatusOrder = [
   'delivery_in_progress',
   'completed',
 ];
-
-final Set<String> kPaidStatuses = kOrderStatusOrder
-    .skipWhile((s) => s != 'payment_completed')
-    .toSet();
 
 class _StoreOrderItem {
   final String orderId;
@@ -151,7 +152,8 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
 
   Future<void> _maybeEnrichOrders(List<QueryDocumentSnapshot> docs) async {
     final newIds = docs.map((d) => d.id).toList();
-    final sameDocs = _listEquals(_lastDocIds, newIds) && _cachedOrders.isNotEmpty;
+    final sameDocs =
+        _listEquals(_lastDocIds, newIds) && _cachedOrders.isNotEmpty;
     if (sameDocs || _enriching) return;
 
     _enriching = true;
@@ -241,7 +243,8 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
       final body = json.decode(res.body);
       final ok = body['ok'] == true;
       _showSnack(
-        body['message']?.toString() ?? (ok ? 'รับออเดอร์สำเร็จ' : 'เกิดข้อผิดพลาด'),
+        body['message']?.toString() ??
+            (ok ? 'รับออเดอร์สำเร็จ' : 'เกิดข้อผิดพลาด'),
         ok ? const Color(0xFF34C759) : Colors.orange,
       );
     } catch (e) {
@@ -256,8 +259,6 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
       return;
     }
 
-    // ใช้ Get.dialog แทน showDialog(context: ...) ตามแนวทาง GetX
-    // ดีไซน์ dialog เองให้เข้ากับธีมของแอป พร้อมไอคอนและปุ่มโค้งมน
     final confirmed = await Get.dialog<bool>(
       const _CancelOrderDialog(),
       barrierDismissible: true,
@@ -277,7 +278,8 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
       final body = json.decode(res.body);
       final ok = body['ok'] == true;
       _showSnack(
-        body['message']?.toString() ?? (ok ? 'ยกเลิกออเดอร์สำเร็จ' : 'เกิดข้อผิดพลาด'),
+        body['message']?.toString() ??
+            (ok ? 'ยกเลิกออเดอร์สำเร็จ' : 'เกิดข้อผิดพลาด'),
         ok ? const Color(0xFF34C759) : Colors.orange,
       );
     } catch (e) {
@@ -291,11 +293,16 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
   }
 
   void _showSnack(String msg, Color color) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: color),
-    );
-  }
+  Get.snackbar(
+    '',
+    msg,
+    backgroundColor: color,
+    colorText: Colors.white,
+    snackPosition: SnackPosition.BOTTOM,
+    margin: const EdgeInsets.all(8),
+    duration: const Duration(seconds: 3),
+  );
+}
 
   @override
   Widget build(BuildContext context) {
@@ -323,8 +330,8 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
               ),
             )
           : errorMessage != null
-              ? _buildError()
-              : _buildDashboard(),
+          ? _buildError()
+          : _buildDashboard(),
     );
   }
 
@@ -337,7 +344,11 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
           children: [
             const Icon(Icons.error_outline, size: 64, color: Colors.red),
             const SizedBox(height: 16),
-            Text(errorMessage!, style: const TextStyle(fontSize: 16), textAlign: TextAlign.center),
+            Text(
+              errorMessage!,
+              style: const TextStyle(fontSize: 16),
+              textAlign: TextAlign.center,
+            ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
               onPressed: _loadData,
@@ -351,7 +362,9 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
   }
 
   Widget _buildDashboard() {
-    final storeRef = FirebaseFirestore.instance.collection('stores').doc(storeId!);
+    final storeRef = FirebaseFirestore.instance
+        .collection('stores')
+        .doc(storeId!);
     final now = DateTime.now();
     final startOfDay = DateTime(now.year, now.month, now.day);
 
@@ -364,7 +377,8 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
             .orderBy('order_datetime', descending: true)
             .snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting && _cachedOrders.isEmpty) {
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              _cachedOrders.isEmpty) {
             return const Center(child: CircularProgressIndicator());
           }
 
@@ -378,26 +392,33 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
           }).toList();
 
           final pendingTodayDocs = todayDocs.where((doc) {
-            final status = (doc.data() as Map<String, dynamic>)['status']?.toString();
+            final status = (doc.data() as Map<String, dynamic>)['status']
+                ?.toString();
             return status != 'completed' && status != 'cancelled';
           }).toList();
 
           final completedTodayDocs = todayDocs.where((doc) {
-            final status = (doc.data() as Map<String, dynamic>)['status']?.toString();
+            final status = (doc.data() as Map<String, dynamic>)['status']
+                ?.toString();
             return status == 'completed';
           }).toList();
 
           final todayRevenue = todayDocs.fold<int>(0, (sum, doc) {
-            final d = doc.data() as Map<String, dynamic>;
-            final status = d['status']?.toString() ?? '';
-            if (!kPaidStatuses.contains(status)) return sum;
-            final servicePrice = (d['service_price'] as num?)?.toInt() ?? 0;
-            final deliveryPrice = (d['delivery_price'] as num?)?.toInt() ?? 0;
-            return sum + servicePrice + deliveryPrice;
+            final data = doc.data() as Map<String, dynamic>;
+            final status = data['status']?.toString() ?? '';
+            if (status != 'completed')
+              return sum;
+            final servicePrice = (data['service_price'] as num?)?.toInt() ?? 0;
+            final deliveryPrice =
+                (data['delivery_price'] as num?)?.toInt() ?? 0;
+            final detergentPrice =
+                (data['detergent_price'] as num?)?.toInt() ?? 0;
+            return sum + servicePrice + deliveryPrice + detergentPrice;
           });
 
           final pendingDocs = allDocs.where((doc) {
-            final status = (doc.data() as Map<String, dynamic>)['status']?.toString();
+            final status = (doc.data() as Map<String, dynamic>)['status']
+                ?.toString();
             return status == 'pending_confirmation';
           }).toList();
 
@@ -416,7 +437,10 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
               children: [
                 _buildStatsRow(todayDocs.length, todayRevenue),
                 const SizedBox(height: 12),
-                _buildStatusRow(pendingTodayDocs.length, completedTodayDocs.length),
+                _buildStatusRow(
+                  pendingTodayDocs.length,
+                  completedTodayDocs.length,
+                ),
                 const SizedBox(height: 16),
                 _buildQuickMenu(),
                 const SizedBox(height: 16),
@@ -510,13 +534,20 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 3)),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('เมนูด่วน', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+          const Text(
+            'เมนูด่วน',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          ),
           const SizedBox(height: 14),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -528,16 +559,28 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
                 onTap: () => Get.to(() => const StoreNewOrdersScreen()),
               ),
               _QuickMenuItem(
-                icon: Icons.groups_outlined,
-                color: const Color(0xFFFF9800),
-                label: 'จัดการพนักงาน',
-                onTap: () {},
+                icon: Icons.star_outlined,
+              color: const Color(0xFFFFC107),
+                label: 'รีวิวร้านค้า',
+                onTap: () {
+                  Get.to(() => const StoreReviewScreen());
+                },
               ),
               _QuickMenuItem(
-                icon: Icons.settings_outlined,
-                color: const Color(0xFF9C27B0),
-                label: 'จัดการเครื่องซัก/อบ',
-                onTap: () {},
+                icon: Icons.groups_outlined,
+                color: const Color(0xFF7C6FDB),
+                label: 'พนักงาน',
+                onTap: () {
+                  Get.to(() => const ManageEmployeeScreen());
+                },
+              ),
+              _QuickMenuItem(
+                icon: Icons.local_laundry_service_outlined,
+                color: const Color(0xFF5B6B8C),
+                label: 'เครื่องซัก/อบ',
+                onTap: () {
+                  Get.to(() => const ManageMachineScreen());
+                },
               ),
             ],
           ),
@@ -550,7 +593,10 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        const Text('ออเดอร์รอยืนยัน', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        const Text(
+          'ออเดอร์รอยืนยัน',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        ),
         TextButton(
           onPressed: () {
             Get.to(() => const StoreNewOrdersScreen());
@@ -558,7 +604,10 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
           child: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('ดูทั้งหมด', style: TextStyle(color: Color(0xFF0593FF), fontSize: 13)),
+              Text(
+                'ดูทั้งหมด',
+                style: TextStyle(color: Color(0xFF0593FF), fontSize: 13),
+              ),
               Icon(Icons.chevron_right, color: Color(0xFF0593FF), size: 18),
             ],
           ),
@@ -575,7 +624,10 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
         children: [
           Icon(Icons.inbox_outlined, size: 48, color: Colors.grey.shade300),
           const SizedBox(height: 8),
-          Text('ยังไม่มีออเดอร์', style: TextStyle(color: Colors.grey.shade500)),
+          Text(
+            'ยังไม่มีออเดอร์',
+            style: TextStyle(color: Colors.grey.shade500),
+          ),
         ],
       ),
     );
@@ -603,7 +655,11 @@ class _StatCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 3)),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
         ],
       ),
       child: Column(
@@ -612,15 +668,25 @@ class _StatCard extends StatelessWidget {
           Container(
             width: 40,
             height: 40,
-            decoration: BoxDecoration(color: iconBg, borderRadius: BorderRadius.circular(10)),
+            decoration: BoxDecoration(
+              color: iconBg,
+              borderRadius: BorderRadius.circular(10),
+            ),
             child: Icon(icon, color: Colors.white, size: 20),
           ),
           const SizedBox(height: 10),
-          Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+          Text(
+            label,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          ),
           const SizedBox(height: 4),
           Text(
             value,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFF1A1A1A)),
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1A1A1A),
+            ),
           ),
         ],
       ),
@@ -647,21 +713,37 @@ class _StatusMiniCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(14)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(14),
+      ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+              Text(
+                label,
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+              ),
               const SizedBox(height: 4),
-              Text(value, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: valueColor)),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: valueColor,
+                ),
+              ),
             ],
           ),
           Container(
             padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(color: valueColor.withOpacity(0.15), shape: BoxShape.circle),
+            decoration: BoxDecoration(
+              color: valueColor.withOpacity(0.15),
+              shape: BoxShape.circle,
+            ),
             child: Icon(icon, color: valueColor, size: 18),
           ),
         ],
@@ -695,7 +777,10 @@ class _QuickMenuItem extends StatelessWidget {
             Container(
               width: 48,
               height: 48,
-              decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(14)),
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(14),
+              ),
               child: Icon(icon, color: Colors.white, size: 22),
             ),
             const SizedBox(height: 6),
@@ -721,97 +806,103 @@ class _CancelOrderDialog extends StatelessWidget {
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 32),
       child: Container(
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.15),
-                blurRadius: 24,
-                offset: const Offset(0, 10),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.cancel_rounded,
-                  color: Colors.red,
-                  size: 34,
-                ),
-              ),
-              const SizedBox(height: 18),
-              const Text(
-                'ยกเลิกออเดอร์',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'คุณแน่ใจหรือไม่ว่าต้องการยกเลิกออเดอร์นี้?',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 13.5,
-                  color: Colors.grey.shade600,
-                  height: 1.4,
-                ),
-              ),
-              const SizedBox(height: 24),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Get.back(result: false),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.black,
-                        side: BorderSide(color: Colors.grey.shade300),
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      child: const Text(
-                        'ไม่ใช่',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () => Get.back(result: true),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      child: const Text(
-                        'ยืนยันยกเลิก',
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.15),
+              blurRadius: 24,
+              offset: const Offset(0, 10),
+            ),
+          ],
         ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.cancel_rounded,
+                color: Colors.red,
+                size: 34,
+              ),
+            ),
+            const SizedBox(height: 18),
+            const Text(
+              'ยกเลิกออเดอร์',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'คุณแน่ใจหรือไม่ว่าต้องการยกเลิกออเดอร์นี้?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13.5,
+                color: Colors.grey.shade600,
+                height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Get.back(result: false),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.black,
+                      side: BorderSide(color: Colors.grey.shade300),
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: const Text(
+                      'ไม่ใช่',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => Get.back(result: true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: const Text(
+                      'ยืนยันยกเลิก',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -854,7 +945,11 @@ class _StoreOrderCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 3)),
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
         ],
       ),
       child: Column(
@@ -866,29 +961,46 @@ class _StoreOrderCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   item.customerName,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.access_time, size: 13, color: Colors.grey.shade500),
+                  Icon(
+                    Icons.access_time,
+                    size: 13,
+                    color: Colors.grey.shade500,
+                  ),
                   const SizedBox(width: 3),
-                  Text(_timeText, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+                  Text(
+                    _timeText,
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ),
                   SizedBox(
                     width: 28,
                     height: 28,
                     child: PopupMenuButton<String>(
                       padding: EdgeInsets.zero,
-                      icon: Icon(Icons.more_vert, size: 18, color: Colors.grey.shade500),
+                      icon: Icon(
+                        Icons.more_vert,
+                        size: 18,
+                        color: Colors.grey.shade500,
+                      ),
                       onSelected: (value) {
                         if (value == 'cancel') onCancel();
                       },
                       itemBuilder: (context) => [
                         const PopupMenuItem(
                           value: 'cancel',
-                          child: Text('ยกเลิกออเดอร์', style: TextStyle(color: Colors.red)),
+                          child: Text(
+                            'ยกเลิกออเดอร์',
+                            style: TextStyle(color: Colors.red),
+                          ),
                         ),
                       ],
                     ),
@@ -898,7 +1010,10 @@ class _StoreOrderCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 4),
-          Text('#$_orderCode', style: TextStyle(fontSize: 12, color: Colors.grey.shade500)),
+          Text(
+            '#$_orderCode',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+          ),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -924,9 +1039,14 @@ class _StoreOrderCard extends StatelessWidget {
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
-                  child: const Text('รับออเดอร์', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                  child: const Text(
+                    'รับออเดอร์',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -937,9 +1057,14 @@ class _StoreOrderCard extends StatelessWidget {
                     foregroundColor: const Color(0xFF0593FF),
                     side: const BorderSide(color: Color(0xFF0593FF)),
                     padding: const EdgeInsets.symmetric(vertical: 8),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
-                  child: const Text('รายละเอียด', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                  child: const Text(
+                    'รายละเอียด',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
                 ),
               ),
             ],

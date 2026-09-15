@@ -9,6 +9,8 @@ import 'package:wash_and_dry/config/config.dart';
 import 'package:wash_and_dry/models/res/customer/res_orderlist_customer.dart';
 import 'package:wash_and_dry/screens/customer/orders/customer_order_detail_screen.dart';
 
+enum _HistoryTab { completed, cancelled }
+
 class CustomerServiceHistoryScreen extends StatefulWidget {
   const CustomerServiceHistoryScreen({super.key, required this.customerId});
 
@@ -29,8 +31,10 @@ class _CustomerServiceHistoryScreenState
   bool _loading = true;
   String? _error;
 
-  List<OrderItem> _historyOrders = [];
+  List<OrderItem> _allOrders = [];
   final Map<String, String> _statuses = {};
+
+  _HistoryTab _selectedTab = _HistoryTab.completed;
 
   static const _doneStatuses = {'completed'};
   static const _cancelStatuses = {'cancelled'};
@@ -68,7 +72,7 @@ class _CustomerServiceHistoryScreenState
 
   Future<void> _fetchOrders() async {
     try {
-      final uri = Uri.parse('$_baseUrl/order/list/${widget.customerId}');
+      final uri = Uri.parse('$_baseUrl/order/customer/list/${widget.customerId}');
       final res = await http.get(uri);
       if (!mounted) return;
 
@@ -106,7 +110,7 @@ class _CustomerServiceHistoryScreenState
           .toList();
 
       setState(() {
-        _historyOrders = history;
+        _allOrders = history;
         _loading = false;
       });
     } catch (e) {
@@ -118,6 +122,19 @@ class _CustomerServiceHistoryScreenState
       });
     }
   }
+
+  List<OrderItem> get _completedOrders => _allOrders
+      .where((o) => _doneStatuses.contains(_statuses[o.orderId]))
+      .toList();
+
+  List<OrderItem> get _cancelledOrders => _allOrders
+      .where((o) => _cancelStatuses.contains(_statuses[o.orderId]))
+      .toList();
+
+  List<OrderItem> get _visibleOrders =>
+      _selectedTab == _HistoryTab.completed
+          ? _completedOrders
+          : _cancelledOrders;
 
   String _statusLabel(String s) =>
       {
@@ -192,11 +209,10 @@ class _CustomerServiceHistoryScreenState
             color: Colors.white,
           ),
         ),
-      leading: IconButton(
-        icon: const Icon(Icons.arrow_back_ios, color: Colors.white,),
-        onPressed: () => Get.back(result: true),
-      ),
-      
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
+          onPressed: () => Get.back(result: true),
+        ),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(color: _primary))
@@ -207,16 +223,108 @@ class _CustomerServiceHistoryScreenState
                 style: TextStyle(color: Colors.red.shade400),
               ),
             )
-          : _historyOrders.isEmpty
-          ? _emptyView()
-          : ListView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-              itemCount: _historyOrders.length,
-              itemBuilder: (_, i) {
-                final order = _historyOrders[i];
-                return _card(order, _statuses[order.orderId] ?? '');
-              },
+          : Column(
+              children: [
+                _tabBar(),
+                Expanded(
+                  child: _visibleOrders.isEmpty
+                      ? _emptyView()
+                      : ListView.builder(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+                          itemCount: _visibleOrders.length,
+                          itemBuilder: (_, i) {
+                            final order = _visibleOrders[i];
+                            return _card(order, _statuses[order.orderId] ?? '');
+                          },
+                        ),
+                ),
+              ],
             ),
+    );
+  }
+
+  Widget _tabBar() => Container(
+    margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+    padding: const EdgeInsets.all(4),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      boxShadow: [
+        BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 12),
+      ],
+    ),
+    child: Row(
+      children: [
+        Expanded(
+          child: _tabButton(
+            label: 'สำเร็จ',
+            count: _completedOrders.length,
+            isSelected: _selectedTab == _HistoryTab.completed,
+            selectedColor: const Color(0xFF22C55E),
+            onTap: () => setState(() => _selectedTab = _HistoryTab.completed),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: _tabButton(
+            label: 'ยกเลิก',
+            count: _cancelledOrders.length,
+            isSelected: _selectedTab == _HistoryTab.cancelled,
+            selectedColor: const Color(0xFFEF4444),
+            onTap: () => setState(() => _selectedTab = _HistoryTab.cancelled),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _tabButton({
+    required String label,
+    required int count,
+    required bool isSelected,
+    required Color selectedColor,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? selectedColor.withOpacity(0.12) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: isSelected ? selectedColor : Colors.black45,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: isSelected ? selectedColor : Colors.black12,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                '$count',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: isSelected ? Colors.white : Colors.black54,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

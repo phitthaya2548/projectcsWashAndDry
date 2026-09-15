@@ -8,7 +8,9 @@ import 'package:wash_and_dry/config/config.dart';
 import 'package:wash_and_dry/models/req/customer/req_address_customer.dart';
 import 'package:wash_and_dry/models/req/customer/req_order_customer.dart';
 import 'package:wash_and_dry/screens/customer/customer_address_screen.dart';
+import 'package:wash_and_dry/screens/customer/orders/customer_orderslist_screen.dart';
 import 'package:wash_and_dry/service/session_service.dart';
+import 'package:wash_and_dry/widgets/main_shell_customer.dart';
 
 class CustomerOrderScreen extends StatefulWidget {
   final String storeId;
@@ -169,8 +171,11 @@ class _CustomerOrderScreenState extends State<CustomerOrderScreen>
           ),
           shouldIconPulse: false,
         );
-        await Future.delayed(const Duration(seconds: 2));
-        Get.back();
+        await Future.delayed(const Duration(seconds: 1));
+       
+Get.offAll(
+  () => const MainShellCustomer(initialIndex: 1),
+);
       } else {
         _err(data.message);
       }
@@ -217,7 +222,7 @@ class _CustomerOrderScreenState extends State<CustomerOrderScreen>
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(vertical: 20),
                 decoration: const BoxDecoration(
-                  color: _primary,
+                  color: Color(0xFF0EA5E9),
                   borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
                 ),
                 child: const Column(
@@ -244,18 +249,17 @@ class _CustomerOrderScreenState extends State<CustomerOrderScreen>
                 padding: const EdgeInsets.all(20),
                 child: Column(
                   children: [
-                    _dRow(Icons.dry_cleaning_outlined, 'บริการ', svcLabel),
+                    _dRow('บริการ', svcLabel),
                     const Divider(height: 20),
-                    _dRow(Icons.soap_outlined, 'น้ำยาซัก', detLabel),
+                    _dRow( 'น้ำยาซัก', detLabel),
                     const Divider(height: 20),
                     _dRow(
-                      Icons.location_on_outlined,
                       'ที่อยู่',
                       addresses.first.addressName,
                     ),
                     if (_noteCtrl.text.isNotEmpty) ...[
                       const Divider(height: 20),
-                      _dRow(Icons.note_outlined, 'หมายเหตุ', _noteCtrl.text),
+                      _dRow('หมายเหตุ', _noteCtrl.text),
                     ],
                   ],
                 ),
@@ -320,10 +324,9 @@ class _CustomerOrderScreenState extends State<CustomerOrderScreen>
     );
   }
 
-  Widget _dRow(IconData icon, String label, String value) => Row(
+  Widget _dRow(String label, String value) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Icon(icon, size: 17, color: _primary),
       const SizedBox(width: 10),
       Expanded(
         child: Column(
@@ -354,14 +357,14 @@ class _CustomerOrderScreenState extends State<CustomerOrderScreen>
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
         flexibleSpace: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xFF0593FF), Color(0xFF0476D9)],
-            ),
-          ),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF0593FF), Color(0xFF0476D9)],
         ),
+      ),
+    ),
         centerTitle: true,
         elevation: 0,
         leading: IconButton(

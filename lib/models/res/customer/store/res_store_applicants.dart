@@ -13,15 +13,24 @@ class StoreApplicantsResponse {
 
   factory StoreApplicantsResponse.fromJson(Map<String, dynamic> json) {
     final data = json['data'] as Map<String, dynamic>? ?? {};
+
     return StoreApplicantsResponse(
       ok: json['ok'] == true,
-      riders: (data['riders'] as List? ?? [])
-          .map((e) => RiderApplicant.fromJson(e as Map<String, dynamic>))
+      riders: (data['riders'] as List<dynamic>? ?? [])
+          .map(
+            (e) => RiderApplicant.fromJson(
+              e as Map<String, dynamic>,
+            ),
+          )
           .toList(),
-      staff: (data['staff'] as List? ?? [])
-          .map((e) => StaffApplicant.fromJson(e as Map<String, dynamic>))
+      staff: (data['staff'] as List<dynamic>? ?? [])
+          .map(
+            (e) => StaffApplicant.fromJson(
+              e as Map<String, dynamic>,
+            ),
+          )
           .toList(),
-      total: data['total'] as int? ?? 0,
+      total: _toInt(data['total']),
     );
   }
 }
@@ -56,7 +65,7 @@ class RiderApplicant {
       profileImage: json['profile_image']?.toString() ?? '',
       vehicleType: json['vehicle_type']?.toString() ?? '',
       licensePlate: json['license_plate']?.toString() ?? '',
-      appliedAt: _parseTimestamp(json['applied_at']),
+      appliedAt: _parseDate(json['applied_at']),
     );
   }
 }
@@ -85,15 +94,32 @@ class StaffApplicant {
       email: json['email']?.toString() ?? '',
       phone: json['phone']?.toString() ?? '',
       profileImage: json['profile_image']?.toString() ?? '',
-      appliedAt: _parseTimestamp(json['applied_at']),
+      appliedAt: _parseDate(json['applied_at']),
     );
   }
 }
 
-DateTime? _parseTimestamp(dynamic value) {
+int _toInt(dynamic value) {
+  if (value is int) return value;
+  return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+DateTime? _parseDate(dynamic value) {
   if (value == null) return null;
-  if (value is Map && value['_seconds'] != null) {
-    return DateTime.fromMillisecondsSinceEpoch((value['_seconds'] as int) * 1000);
+
+  if (value is String) {
+    return DateTime.tryParse(value);
   }
+
+  if (value is Map) {
+    final seconds = value['_seconds'] ?? value['seconds'];
+
+    if (seconds is num) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        seconds.toInt() * 1000,
+      );
+    }
+  }
+
   return null;
 }

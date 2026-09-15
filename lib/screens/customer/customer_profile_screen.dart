@@ -7,10 +7,14 @@ import 'package:wash_and_dry/screens/customer/customer_address_screen.dart';
 import 'package:wash_and_dry/screens/customer/customer_profile_edit_screen.dart';
 import 'package:wash_and_dry/screens/customer/wallet/customer_wallet_screen.dart';
 import 'package:wash_and_dry/screens/login_screen.dart';
+import 'package:wash_and_dry/screens/notification_history_screen.dart';
 import 'package:wash_and_dry/service/customer_service.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:wash_and_dry/service/notification_api_service.dart';
+import 'package:wash_and_dry/service/notification_service.dart';
 import 'package:wash_and_dry/service/session_service.dart';
+import 'package:wash_and_dry/widgets/drawercustomer.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -27,12 +31,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _customerId;
   String? _phone;
   String? googleId;
+  int _unreadCount =0;
   StreamSubscription<DocumentSnapshot>? _customerListener;
-
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  StreamSubscription<String?>? _orderUpdateSub;
   @override
   void initState() {
     super.initState();
     _loadSession();
+    _loadUnreadCount();
+     _orderUpdateSub = NotificationService().onOrderUpdate.listen((_) {
+      if (mounted) _loadUnreadCount();
+    });
   }
 
   @override
@@ -40,7 +50,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _customerListener?.cancel();
     super.dispose();
   }
-
+Future<void> _loadUnreadCount() async {
+  final count = await NotificationApiService.getMyUnreadCount();
+  if (mounted) {
+    setState(() => _unreadCount = count);
+  }
+}
  Future<void> _logout() async {
   Get.dialog(
     Dialog(
@@ -291,6 +306,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey, 
+      drawer: const Drawer(
+        child: DrawerCustomerContent(),
+      ),
       backgroundColor: const Color(0xFFF5F7FA),
       body: Column(
         children: [
@@ -383,7 +402,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
               child: Row(
                 children: [
-                  _buildCircleBtn(Icons.menu, () {}),
+                  _circleIconButton(Icons.menu),
                   const Expanded(
                     child: Center(
                       child: Text(
@@ -396,7 +415,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                   ),
-                  _buildCircleBtn(Icons.notifications_none_rounded, () {}),
+                  _circleIconButton(Icons.notifications_none_rounded),
                 ],
               ),
             ),
@@ -746,21 +765,64 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ),
     );
   }
+ Widget _circleIconButton(IconData icon) {
+  return InkWell(
+  onTap: () async {
+    if (icon == Icons.menu) {
+      _scaffoldKey.currentState?.openDrawer();
+    } else {
+      final customerId = await Session().getCustomerId();
 
-  Widget _buildCircleBtn(IconData icon, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(24),
-      child: Container(
-        width: 48,
-        height: 48,
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.22),
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white.withOpacity(0.35)),
+if (customerId == null || customerId.isEmpty) return;
+
+await Get.to(
+  () => NotificationHistoryScreen(
+    userId: customerId,
+    userRole: 'customer',
+  ),
+);
+      _loadUnreadCount();
+    }
+  },
+    borderRadius: BorderRadius.circular(25),
+    child: Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.25),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white.withOpacity(0.4), width: 1.5),
+          ),
+          child: Icon(icon, color: Colors.white, size: 24),
         ),
-        child: Icon(icon, color: Colors.white, size: 22),
-      ),
-    );
-  }
+        if (icon != Icons.menu && _unreadCount > 0)
+          Positioned(
+            right: -2,
+            top: -2,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+              decoration: BoxDecoration(
+                color: Colors.red,
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: Colors.white, width: 1),
+              ),
+              child: Text(
+                _unreadCount > 99 ? '99+' : _unreadCount.toString(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
+}
 }

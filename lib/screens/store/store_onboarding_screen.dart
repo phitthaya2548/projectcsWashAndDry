@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:get/get.dart';
@@ -124,6 +125,283 @@ class _StoreOnboardingScreenState extends State<StoreOnboardingScreen> {
           ? "อีเมลไม่ถูกต้อง"
           : null);
 
+  Future<void> _showTimeWheelPicker(
+    TextEditingController controller,
+    String title,
+  ) async {
+    final parts = controller.text.split(":");
+    int selectedHour = int.tryParse(parts.isNotEmpty ? parts[0] : "") ?? 0;
+    int selectedMinute = int.tryParse(parts.length > 1 ? parts[1] : "") ?? 0;
+
+    selectedHour = selectedHour.clamp(0, 23).toInt();
+    selectedMinute = selectedMinute.clamp(0, 59).toInt();
+
+    final hourController = FixedExtentScrollController(
+      initialItem: selectedHour,
+    );
+    final minuteController = FixedExtentScrollController(
+      initialItem: selectedMinute,
+    );
+
+    int tempHour = selectedHour;
+    int tempMinute = selectedMinute;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(28),
+            ),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 42,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE2E8F0),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: _lightBlueBackground,
+                          borderRadius: BorderRadius.circular(13),
+                        ),
+                        child: const Icon(
+                          Icons.schedule_rounded,
+                          color: _primaryColor,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            const Text(
+                              "เลื่อนขึ้นลงเพื่อเลือกเวลา",
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: _mutedText,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Container(
+                    height: 220,
+                    decoration: BoxDecoration(
+                      color: _pageBackground,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: _borderColor),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            children: [
+                              const Padding(
+                                padding: EdgeInsets.only(top: 14),
+                                child: Text(
+                                  "ชั่วโมง",
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: _mutedText,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                child: CupertinoPicker(
+                                  scrollController: hourController,
+                                  itemExtent: 44,
+                                  useMagnifier: true,
+                                  magnification: 1.08,
+                                  selectionOverlay: Container(
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _primaryColor.withOpacity(0.08),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  onSelectedItemChanged: (index) {
+                                    tempHour = index;
+                                  },
+                                  children: List.generate(
+                                    24,
+                                    (index) => Center(
+                                      child: Text(
+                                        index.toString().padLeft(2, "0"),
+                                        style: const TextStyle(
+                                          fontSize: 21,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFF0F172A),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.only(top: 38),
+                          child: Text(
+                            ":",
+                            style: TextStyle(
+                              fontSize: 26,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Column(
+                            children: [
+                              const Padding(
+                                padding: EdgeInsets.only(top: 14),
+                                child: Text(
+                                  "นาที",
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: _mutedText,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                child: CupertinoPicker(
+                                  scrollController: minuteController,
+                                  itemExtent: 44,
+                                  useMagnifier: true,
+                                  magnification: 1.08,
+                                  selectionOverlay: Container(
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _primaryColor.withOpacity(0.08),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  onSelectedItemChanged: (index) {
+                                    tempMinute = index;
+                                  },
+                                  children: List.generate(
+                                    60,
+                                    (index) => Center(
+                                      child: Text(
+                                        index.toString().padLeft(2, "0"),
+                                        style: const TextStyle(
+                                          fontSize: 21,
+                                          fontWeight: FontWeight.w600,
+                                          color: Color(0xFF0F172A),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _mutedText,
+                            side: const BorderSide(color: _borderColor),
+                            minimumSize: const Size.fromHeight(50),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            "ยกเลิก",
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            controller.text =
+                                "${tempHour.toString().padLeft(2, '0')}:${tempMinute.toString().padLeft(2, '0')}";
+                            Navigator.pop(sheetContext);
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _primaryColor,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            minimumSize: const Size.fromHeight(50),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            "ตกลง",
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    hourController.dispose();
+    minuteController.dispose();
+  }
+
   String? _validateMaxDelivery(String? value) {
     final error = _validateNumber(value);
     if (error != null) return error;
@@ -145,8 +423,9 @@ class _StoreOnboardingScreenState extends State<StoreOnboardingScreen> {
 
   Future<void> _pickAdImages(ImageSource source) async {
     final remainingSlots = 5 - _adImages.length;
+
     if (remainingSlots <= 0) {
-      _showError("ครบ 5 รูปแล้ว");
+      _showError("เพิ่มรูปได้สูงสุด 5 รูป");
       return;
     }
 
@@ -156,18 +435,34 @@ class _StoreOnboardingScreenState extends State<StoreOnboardingScreen> {
         maxWidth: 1200,
         imageQuality: 80,
       );
-      if (picked != null) setState(() => _adImages.add(File(picked.path)));
-    } else {
-      final pickedList = await _imagePicker.pickMultiImage(
-        maxWidth: 1200,
-        imageQuality: 80,
-      );
-      if (pickedList.isEmpty) return;
-      if (pickedList.length > remainingSlots) {
-        _showError("เพิ่มได้อีก $remainingSlots รูป");
-        return;
-      }
-      setState(() => _adImages.addAll(pickedList.map((x) => File(x.path))));
+
+      if (picked == null) return;
+
+      setState(() {
+        _adImages.add(File(picked.path));
+      });
+
+      return;
+    }
+
+    final pickedList = await _imagePicker.pickMultiImage(
+      maxWidth: 1200,
+      imageQuality: 80,
+    );
+
+    if (pickedList.isEmpty) return;
+
+    final selected = pickedList
+        .take(remainingSlots)
+        .map((image) => File(image.path))
+        .toList();
+
+    setState(() {
+      _adImages.addAll(selected);
+    });
+
+    if (pickedList.length > remainingSlots) {
+      _showError("เพิ่มได้สูงสุด 5 รูป เลือกมาให้แล้ว $remainingSlots รูป");
     }
   }
 
@@ -434,14 +729,20 @@ class _StoreOnboardingScreenState extends State<StoreOnboardingScreen> {
     TextInputType? keyboardType,
     int maxLines = 1,
     String? hint,
+    bool readOnly = false,
+    VoidCallback? onTap,
+    Widget? suffixIcon,
   }) => TextFormField(
     controller: controller,
     style: const TextStyle(fontSize: 15),
+    readOnly: readOnly,
+    onTap: onTap,
     decoration: InputDecoration(
       labelText: label,
       hintText: hint,
       hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
       prefixIcon: Icon(icon, color: _mutedText, size: 20),
+      suffixIcon: suffixIcon,
       filled: true,
       fillColor: _pageBackground,
       contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
@@ -807,7 +1108,7 @@ class _StoreOnboardingScreenState extends State<StoreOnboardingScreen> {
         _buildSectionCard(
           title: "เวลาทำการ",
           icon: Icons.schedule_outlined,
-          subtitle: "รูปแบบ HH:MM เช่น 08:00",
+          subtitle: "แตะเวลาแล้วเลื่อนขึ้นลงเพื่อเลือก",
           fields: [
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -819,7 +1120,15 @@ class _StoreOnboardingScreenState extends State<StoreOnboardingScreen> {
                     icon: Icons.wb_sunny_outlined,
                     hint: "08:00",
                     validator: _validateTime,
-                    keyboardType: TextInputType.datetime,
+                    readOnly: true,
+                    onTap: () => _showTimeWheelPicker(
+                      _openingTimeController,
+                      "เลือกเวลาเปิด",
+                    ),
+                    suffixIcon: const Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color: _mutedText,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -830,7 +1139,15 @@ class _StoreOnboardingScreenState extends State<StoreOnboardingScreen> {
                     icon: Icons.nights_stay_outlined,
                     hint: "18:00",
                     validator: _validateTime,
-                    keyboardType: TextInputType.datetime,
+                    readOnly: true,
+                    onTap: () => _showTimeWheelPicker(
+                      _closingTimeController,
+                      "เลือกเวลาปิด",
+                    ),
+                    suffixIcon: const Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      color: _mutedText,
+                    ),
                   ),
                 ),
               ],
@@ -1039,30 +1356,29 @@ class _StoreOnboardingScreenState extends State<StoreOnboardingScreen> {
     return Scaffold(
       backgroundColor: _pageBackground,
       appBar: AppBar(
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: _primaryColor,
-        title: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              "ตั้งค่าร้านค้า",
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-            ),
-            Text(
-              "ขั้นตอนที่ ${_currentStep + 1} จาก $_stepCount",
-              style: const TextStyle(
-                color: Colors.white70,
-                fontSize: 11.5,
-              ),
-            ),
-          ],
-        ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18),
-          onPressed: () => Navigator.pop(context),
-        ),
+  elevation: 0,
+  centerTitle: true,
+  automaticallyImplyLeading: false,
+  flexibleSpace: Container(
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          Color(0xFF0593FF),
+          Color(0xFF0476D9),
+        ],
       ),
+    ),
+  ),
+  title: const Text(
+    "ตั้งค่าร้านค้า",
+    style: TextStyle(
+      color: Colors.white,
+      fontWeight: FontWeight.w600,
+    ),
+  ),
+),
       body: Column(
         children: [
           _buildStepIndicator(),

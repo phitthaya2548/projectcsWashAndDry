@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:calendar_date_picker2/calendar_date_picker2.dart';
 import 'package:get/get_core/src/get_main.dart';
 import 'package:get/get_navigation/src/extension_navigation.dart';
 import 'package:http/http.dart' as http;
@@ -50,12 +51,20 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
 
   bool _ordersLoading = true;
   String? _ordersError;
-  List<StoreOrderItem> _allOrders = [];
+  List<StoreOrderItem> _activeOrders = [];
+
+  bool _historyLoading = true;
+  String? _historyError;
+  List<StoreOrderItem> _historyOrders = [];
+
   final Map<String, StreamSubscription<DocumentSnapshot>> _subscriptions = {};
   final Map<String, String> _statuses = {};
   final Map<String, Timestamp> _liveDatetimes = {};
 
+  DateTime? _historySelectedDate;
+
   static const _activeStatuses = {
+    'pending_confirmation',
     'waiting_payment',
     'waiting_pickup',
     'pickup_in_progress',
@@ -102,7 +111,7 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
       }
 
       await _getStoreProfile();
-      await _fetchOrders();
+      await Future.wait([_fetchOrders(), _fetchHistory()]);
     } catch (e) {
       log('Error: $e');
       if (mounted) {
@@ -154,7 +163,7 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
       _ordersError = null;
     });
     try {
-      final uri = Uri.parse('$url/order/store/list/$storeId');
+      final uri = Uri.parse('$url/order/store/process/list/$storeId');
       final res = await http.get(uri).timeout(const Duration(seconds: 10));
       if (!mounted) return;
 
@@ -185,7 +194,7 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
       }
 
       setState(() {
-        _allOrders = list;
+        _activeOrders = list;
         _ordersLoading = false;
       });
     } catch (e) {
@@ -194,6 +203,68 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
       setState(() {
         _ordersError = 'เกิดข้อผิดพลาด';
         _ordersLoading = false;
+      });
+    }
+  }
+
+  Future<void> _fetchHistory() async {
+    if (!mounted) return;
+    setState(() {
+      _historyLoading = true;
+      _historyError = null;
+    });
+    try {
+      final queryParameters = <String, String>{};
+      final selectedDate = _historySelectedDate;
+
+      if (selectedDate != null) {
+        queryParameters['day'] = selectedDate.day.toString();
+        queryParameters['month'] = selectedDate.month.toString();
+        queryParameters['year'] = selectedDate.year.toString();
+      }
+
+      final uri = Uri.parse('$url/order/store/history/$storeId').replace(
+        queryParameters: queryParameters.isEmpty ? null : queryParameters,
+      );
+      final res = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (!mounted) return;
+
+      if (res.statusCode != 200) {
+        setState(() {
+          _historyError = 'โหลดข้อมูลไม่สำเร็จ (${res.statusCode})';
+          _historyLoading = false;
+        });
+        return;
+      }
+
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      if (body['ok'] != true) {
+        setState(() {
+          _historyError = body['message'] as String? ?? 'เกิดข้อผิดพลาด';
+          _historyLoading = false;
+        });
+        return;
+      }
+
+      final list = (body['data'] as List<dynamic>? ?? [])
+          .map((e) => StoreOrderItem.fromJson(e as Map<String, dynamic>))
+          .toList();
+
+      for (final order in list) {
+        _statuses[order.orderId] = order.initialStatus;
+        _listenToOrder(order.orderId);
+      }
+
+      setState(() {
+        _historyOrders = list;
+        _historyLoading = false;
+      });
+    } catch (e) {
+      log('_fetchHistory error: $e');
+      if (!mounted) return;
+      setState(() {
+        _historyError = 'เกิดข้อผิดพลาด';
+        _historyLoading = false;
       });
     }
   }
@@ -221,31 +292,55 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
 
           if (!statusChanged && !datetimeChanged) return;
 
+          final becameTerminal = statusChanged &&
+              (_doneStatuses.contains(newStatus) || _cancelStatuses.contains(newStatus));
+
           setState(() {
             if (statusChanged) _statuses[orderId] = newStatus;
             if (gotTimestamp) _liveDatetimes[orderId] = newDatetime;
+            if (becameTerminal) _moveOrderToHistory(orderId);
           });
+
+          if (becameTerminal) {
+            _subscriptions[orderId]?.cancel();
+            _subscriptions.remove(orderId);
+          }
         }, onError: (e) {
           log('listen order $orderId error: $e');
         });
   }
 
-  String _statusLabel(String s) =>
-      {
-        'waiting_payment': 'รอชำระเงิน',
-        'waiting_pickup': 'รอรับผ้า',
-        'pickup_in_progress': 'กำลังไปรับผ้า',
-        'pickup_completed': 'กำลังเดินทางไปร้าน',
-        'waiting_wash': 'รอซัก',
-        'waiting_dry': 'รออบ',
-        'washing': 'กำลังซักผ้า',
-        'drying': 'กำลังอบผ้า',
-        'waiting_delivery': 'รอส่งผ้า',
-        'delivery_in_progress': 'กำลังจัดส่ง',
-        'completed': 'เสร็จสิ้น',
-        'cancelled': 'ยกเลิก',
-      }[s] ??
-      s;
+  void _moveOrderToHistory(String orderId) {
+    final idx = _activeOrders.indexWhere((o) => o.orderId == orderId);
+    if (idx == -1) return;
+    final order = _activeOrders.removeAt(idx);
+    if (!_historyOrders.any((o) => o.orderId == orderId)) {
+      _historyOrders.insert(0, order);
+    }
+  }
+
+   String _statusLabel(String status) {
+    return {
+          'pending_confirmation': 'รอยืนยันคำสั่งซื้อ',
+          'waiting_payment': 'รอชำระเงิน',
+          'payment_completed': 'ชำระเงินแล้ว',
+          'waiting_pickup': 'รอรับผ้า',
+          'pickup_in_progress': 'กำลังไปรับผ้า',
+          'pickup_completed': 'รับผ้าเรียบร้อยกำลังไปที่ร้าน',
+          'arrived_at_shop': 'มาถึงร้านแล้ว',
+          'waiting_wash': 'รอซัก',
+          'washing': 'กำลังซักผ้า',
+          'waiting_dry': 'รออบผ้า',
+          'drying': 'กำลังอบผ้า',
+          'waiting_delivery': 'รอส่งผ้า',
+          'delivery_heading_to_shop': 'กำลังไปรับผ้าที่ร้าน',
+          'delivery_pickup_completed': 'รับผ้าที่ร้านแล้ว',
+          'delivery_in_progress': 'กำลังจัดส่ง',
+          'completed': 'เสร็จสิ้น',
+          'cancelled': 'ยกเลิก',
+        }[status] ??
+        status;
+  }
 
   Color _statusColor(String s) {
     if (_activeStatuses.contains(s)) return const Color(0xFF0EA5E9);
@@ -282,6 +377,8 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 
+  String _formatDateOnly(DateTime dt) => '${dt.day} ${_months[dt.month]} ${dt.year + 543}';
+
   String _formatDate(Map<String, dynamic>? raw) {
     if (raw == null) return '-';
     final seconds = raw['_seconds'];
@@ -297,8 +394,118 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
     return _formatDate(order.orderDatetime);
   }
 
+  DateTime? _orderDateTime(StoreOrderItem order) {
+    final live = _liveDatetimes[order.orderId];
+    if (live != null) return live.toDate();
+    final raw = order.orderDatetime;
+    if (raw == null) return null;
+    final seconds = raw['_seconds'];
+    if (seconds == null) return null;
+    return DateTime.fromMillisecondsSinceEpoch((seconds as int) * 1000);
+  }
+
+  bool _matchesHistoryDate(StoreOrderItem order) {
+    final selectedDate = _historySelectedDate;
+    if (selectedDate == null) return true;
+    final dt = _orderDateTime(order);
+    if (dt == null) return false;
+    return dt.year == selectedDate.year &&
+        dt.month == selectedDate.month &&
+        dt.day == selectedDate.day;
+  }
+
+  Future<void> _pickHistoryDate() async {
+    final now = DateTime.now();
+    final initialDate = _historySelectedDate ?? now;
+
+    final result = await showCalendarDatePicker2Dialog(
+      context: context,
+      value: [initialDate.isAfter(now) ? now : initialDate],
+      dialogSize: const Size(340, 430),
+      borderRadius: BorderRadius.circular(24),
+      dialogBackgroundColor: Colors.white,
+      barrierColor: Colors.black.withOpacity(0.35),
+      config: CalendarDatePicker2WithActionButtonsConfig(
+        calendarType: CalendarDatePicker2Type.single,
+        firstDate: DateTime(now.year - 5, 1, 1),
+        lastDate: now,
+        currentDate: now,
+        firstDayOfWeek: 1,
+        centerAlignModePicker: true,
+        closeDialogOnCancelTapped: true,
+        closeDialogOnOkTapped: true,
+        selectedDayHighlightColor: _primary,
+        controlsTextStyle: const TextStyle(
+          color: _dark,
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+        ),
+        dayTextStyle: const TextStyle(
+          color: _dark,
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+        ),
+        selectedDayTextStyle: const TextStyle(
+          color: Colors.white,
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+        ),
+        todayTextStyle: const TextStyle(
+          color: _primary,
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+        ),
+        weekdayLabelTextStyle: const TextStyle(
+          color: Color(0xFF94A3B8),
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+        yearTextStyle: const TextStyle(
+          color: _dark,
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+        ),
+        selectedYearTextStyle: const TextStyle(
+          color: Colors.white,
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+        ),
+        cancelButtonTextStyle: const TextStyle(
+          color: Color(0xFF64748B),
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+        okButtonTextStyle: const TextStyle(
+          color: _primary,
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+
+    if (result == null || result.isEmpty || result.first == null) return;
+
+    final picked = result.first!;
+
+    setState(() {
+      _historySelectedDate = DateTime(picked.year, picked.month, picked.day);
+    });
+
+    await _fetchHistory();
+  }
+
+  Future<void> _clearHistoryDate() async {
+    setState(() {
+      _historySelectedDate = null;
+    });
+    await _fetchHistory();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final anyLoading = _ordersLoading || _historyLoading;
+    final anyError = _ordersError ?? _historyError;
+
     return Scaffold(
       backgroundColor: _bg,
       appBar: storeData == null
@@ -366,40 +573,183 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
                 ),
               ),
             )
-          : _ordersLoading
+          : anyLoading
           ? const Center(child: CircularProgressIndicator(color: _primary))
-          : _ordersError != null
+          : anyError != null
           ? Center(
               child: Text(
-                _ordersError!,
+                anyError,
                 style: TextStyle(color: Colors.red.shade400),
               ),
             )
           : TabBarView(
               controller: _tab,
               children: [
-                _buildTab(_activeStatuses),
-                _buildTab(_doneStatuses),
-                _buildTab(_cancelStatuses),
+                _buildTab(_activeOrders, _activeStatuses, onRefresh: _fetchOrders),
+                _buildHistoryTab(_doneStatuses),
+                _buildHistoryTab(_cancelStatuses),
               ],
             ),
     );
   }
 
-  Widget _buildTab(Set<String> bucket) {
-    final filtered = _allOrders
+  Widget _buildTab(
+    List<StoreOrderItem> source,
+    Set<String> bucket, {
+    required Future<void> Function() onRefresh,
+  }) {
+    final filtered = source
         .where((o) => bucket.contains(_statuses[o.orderId] ?? ''))
         .toList();
-    if (filtered.isEmpty) return _emptyView();
+
+    return _buildOrderList(filtered, onRefresh);
+  }
+
+  Widget _buildHistoryTab(Set<String> bucket) {
+    final filtered = _historyOrders
+        .where((o) => bucket.contains(_statuses[o.orderId] ?? ''))
+        .where(_matchesHistoryDate)
+        .toList();
+
+    return Column(
+      children: [
+        _historyDatePickerBar(),
+        Expanded(child: _buildOrderList(filtered, _fetchHistory)),
+      ],
+    );
+  }
+
+  Widget _buildOrderList(
+    List<StoreOrderItem> orders,
+    Future<void> Function() onRefresh,
+  ) {
+    if (orders.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: onRefresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            SizedBox(
+              height: MediaQuery.of(context).size.height * 0.55,
+              child: _emptyView(),
+            ),
+          ],
+        ),
+      );
+    }
+
     return RefreshIndicator(
-      onRefresh: _fetchOrders,
+      onRefresh: onRefresh,
       child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-        itemCount: filtered.length,
+        itemCount: orders.length,
         itemBuilder: (_, i) {
-          final order = filtered[i];
+          final order = orders[i];
           return _card(order, _statuses[order.orderId] ?? '');
         },
+      ),
+    );
+  }
+
+  Widget _historyDatePickerBar() {
+    final selectedDate = _historySelectedDate;
+
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _pickHistoryDate,
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: _primary.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.calendar_month_rounded,
+                          color: _primary,
+                          size: 21,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              selectedDate == null
+                                  ? 'เลือกวัน เดือน ปี'
+                                  : _formatDateOnly(selectedDate),
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: _dark,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              selectedDate == null
+                                  ? 'แตะเพื่อเปิดปฏิทิน'
+                                  : 'แตะเพื่อเปลี่ยนวันที่',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.black45,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        color: Colors.black38,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (selectedDate != null) ...[
+            const SizedBox(width: 8),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _clearHistoryDate,
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  width: 48,
+                  height: 62,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF1F2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFFFCDD2)),
+                  ),
+                  child: const Icon(
+                    Icons.close_rounded,
+                    color: Colors.redAccent,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

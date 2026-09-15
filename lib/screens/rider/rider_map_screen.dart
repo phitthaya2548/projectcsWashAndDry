@@ -3,33 +3,34 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui' as ui;
 
-import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_compass/flutter_compass.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:http/http.dart' as http;
 import 'package:wash_and_dry/service/session_service.dart';
 import 'package:wash_and_dry/widgets/appbarrider.dart';
 
 class _OrderDest {
-  final String addressText;
+  final String address;
   final double lat;
   final double lng;
-  final String customerName;
-  final String? customerImageUrl;
-  final String? customerPhone;
-  final String? orderNote;
-  String? distanceText;
-  String? durationText;
+  final String name;
+  final String? image;
+  final String? phone;
+  final String? note;
+  String? distance;
+  String? duration;
 
   _OrderDest({
-    required this.addressText,
+    required this.address,
     required this.lat,
     required this.lng,
-    required this.customerName,
-    this.customerImageUrl,
-    this.customerPhone,
-    this.orderNote,
+    required this.name,
+    this.image,
+    this.phone,
+    this.note,
   });
 }
 
@@ -41,44 +42,71 @@ class RiderMapScreen extends StatefulWidget {
 }
 
 class _RiderMapScreenState extends State<RiderMapScreen> {
-  static const List<String> _activeStatuses = [
+  static const _blue = Color(0xFF0593FF);
+  static const _text = Color(0xFF111827);
+  static const _subText = Color(0xFF667085);
+  static const _border = Color(0xFFE7ECF2);
+
+  static const _activeStatuses = [
     'pickup_in_progress',
     'pickup_completed',
+    'delivery_heading_to_shop',
+    'delivery_pickup_completed',
     'delivery_in_progress',
     'store_pickup_in_progress',
   ];
 
-  static const List<Color> _routeColors = [
-    Color(0xFF0593FF),
-    Color(0xFFFF6B35),
-    Color(0xFF22C55E),
-  ];
+  // เขียนตำแหน่งไรเดอร์ขึ้น Firestore ไม่ถี่กว่านี้ (กัน quota/แบตเตอรี่หมดเปลือง)
+  static const _minPositionWriteInterval = Duration(seconds: 4);
 
   String _riderName = '';
   String? _riderImage;
   String? _riderId;
 
-  GoogleMapController? _mapController;
-  LatLng? _myPosition;
-  bool _isLocating = true;
-  String? _locationError;
+  GoogleMapController? _map;
+  LatLng? _myPos;
+  Position? _gpsPosition;
+  LatLng? _lastRouteOrigin;
 
-  final Set<Marker> _markers = {};
-  final Set<Polyline> _polylines = {};
+  final _markers = <Marker>{};
+  final _polylines = <Polyline>{};
+  final _jobs = <String, _OrderDest>{};
+  final _pickupJobs = <String, _OrderDest>{};
+  final _deliveryJobs = <String, _OrderDest>{};
+  final _routeCache = <String, List<LatLng>>{};
 
-  final Map<String, _OrderDest> _jobs = {};
-  final Map<String, List<LatLng>> _routeCache = {};
+  // cache ไอคอน marker ต่อ job แยกจาก marker set หลัก เพื่อไม่ต้องโหลดรูปซ้ำ
+  // ทุกครั้งที่ _rebuildMap() ทำงาน (เดิมโหลดรูปลูกค้าใหม่ทุกครั้งที่ตำแหน่งไรเดอร์ขยับ)
+  final _jobMarkerIcons = <String, BitmapDescriptor>{};
+  final _jobIconsLoading = <String>{};
 
-  StreamSubscription<DocumentSnapshot>? _myPositionSub;
+  StreamSubscription<DocumentSnapshot>? _positionSub;
   StreamSubscription<QuerySnapshot>? _pickupSub;
   StreamSubscription<QuerySnapshot>? _deliverySub;
   StreamSubscription<Position>? _gpsSub;
+  StreamSubscription<CompassEvent>? _compassSub;
 
+  BitmapDescriptor? _riderMarker;
+  String? _selectedJobId;
+  String? _locationError;
   String? _gpsWarning;
-  BitmapDescriptor? _motoIcon;
 
-  bool _hasCenteredCameraOnce = false;
-  bool _isFollowingRider = false;
+  bool _loadingLocation = true;
+  bool _navigationMode = false;
+  bool _centeredOnce = false;
+  bool _cameraAnimating = false;
+  bool _programmaticMove = false;
+
+  double _bearing = 0;
+  double? _phoneHeading;
+  double? _gpsHeading;
+  DateTime? _lastNavCameraUpdate;
+  DateTime? _lastPositionWrite;
+
+  int _pickupVersion = 0;
+  int _deliveryVersion = 0;
+
+  int? _lastRouteIndex;
 
   @override
   void initState() {
@@ -88,56 +116,63 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
   @override
   void dispose() {
+    _positionSub?.cancel();
     _pickupSub?.cancel();
     _deliverySub?.cancel();
-    _myPositionSub?.cancel();
     _gpsSub?.cancel();
-    _mapController?.dispose();
+    _compassSub?.cancel();
+    _map?.dispose();
     super.dispose();
   }
 
   Future<void> _init() async {
     final session = Session();
-    final name = await session.getFullname();
-    final image = await session.getProfileImage();
     final riderId = await session.getRiderId();
 
     if (!mounted) return;
-    setState(() {
-      _riderName = name ?? 'Rider';
-      _riderImage = image;
-      _riderId = riderId;
-    });
+
+    _riderName = await session.getFullname() ?? 'Rider';
+    _riderImage = await session.getProfileImage();
+    _riderId = riderId;
 
     if (riderId == null) {
       setState(() {
-        _isLocating = false;
+        _loadingLocation = false;
         _locationError = 'ไม่พบข้อมูลไรเดอร์';
       });
       return;
     }
 
-    _motoIcon = await _makeProfileMarker(_riderImage, const Color(0xFF0593FF));
+    _riderMarker = await _makeMarker(_riderImage);
+
+    if (!mounted) return;
+    setState(() {});
 
     _listenOrders(riderId);
-    _listenMyPosition(riderId);
+    _listenPosition(riderId);
     _startGps(riderId);
+    _startCompass();
   }
 
-  void _listenMyPosition(String riderId) {
-    setState(() {
-      _isLocating = true;
-      _locationError = null;
-    });
-
-    _myPositionSub = FirebaseFirestore.instance
+  void _listenPosition(String riderId) {
+    _positionSub?.cancel();
+    _positionSub = FirebaseFirestore.instance
         .collection('riders')
         .doc(riderId)
         .snapshots()
-        .listen(_onMyPositionSnapshot, onError: _onMyPositionError);
+        .listen(
+      _onPosition,
+      onError: (_) {
+        if (!mounted) return;
+        setState(() {
+          _loadingLocation = false;
+          _locationError = 'ไม่สามารถโหลดตำแหน่งได้';
+        });
+      },
+    );
   }
 
-  void _onMyPositionSnapshot(DocumentSnapshot snap) {
+  void _onPosition(DocumentSnapshot snap) {
     if (!mounted) return;
 
     final data = snap.data() as Map<String, dynamic>?;
@@ -146,95 +181,170 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
     if (lat == null || lng == null) {
       setState(() {
-        _isLocating = false;
+        _loadingLocation = false;
         _locationError = 'ยังไม่มีตำแหน่งของไรเดอร์ในระบบ';
       });
       return;
     }
 
-    final newPos = LatLng(lat, lng);
-    final newMarker = Marker(
-      markerId: const MarkerId('rider'),
-      position: newPos,
-      anchor: const Offset(0.5, 0.5),
-      infoWindow: const InfoWindow(title: '🛵 ตำแหน่งของฉัน'),
-      icon: _motoIcon ??
-          BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
-    );
+    final pos = LatLng(lat, lng);
 
     setState(() {
-      _myPosition = newPos;
-      _isLocating = false;
+      _myPos = pos;
+      _loadingLocation = false;
       _locationError = null;
-      _markers
-        ..removeWhere((m) => m.markerId.value == 'rider')
-        ..add(newMarker);
+      _setRiderMarker(pos);
     });
 
-    _updateCameraForNewPosition(newPos);
-    _rebuildJobsOnMap();
-  }
+    if (!_centeredOnce) {
+      _centeredOnce = true;
+      _programmaticMove = true;
+      _map?.animateCamera(CameraUpdate.newLatLngZoom(pos, 14));
+    }
 
-  void _updateCameraForNewPosition(LatLng newPos) {
-    if (!_hasCenteredCameraOnce) {
-      _hasCenteredCameraOnce = true;
-      _mapController?.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(target: newPos, zoom: 14),
-        ),
-      );
-    } else if (_isFollowingRider) {
-      _mapController?.animateCamera(CameraUpdate.newLatLng(newPos));
+    if (!_navigationMode) {
+      _rebuildMap();
     }
   }
 
-  void _onMyPositionError(Object e) {
-    debugPrint('listenMyPosition error: $e');
-    if (!mounted) return;
-    setState(() {
-      _isLocating = false;
-      _locationError = 'ไม่สามารถโหลดตำแหน่งได้';
-    });
+  void _setRiderMarker(LatLng pos) {
+    _markers
+      ..removeWhere((m) => m.markerId.value == 'rider')
+      ..add(
+        Marker(
+          markerId: const MarkerId('rider'),
+          position: pos,
+          anchor: const Offset(0.5, 0.5),
+          icon: _riderMarker ??
+              BitmapDescriptor.defaultMarkerWithHue(
+                BitmapDescriptor.hueBlue,
+              ),
+        ),
+      );
   }
 
   Future<void> _startGps(String riderId) async {
-    setState(() => _gpsWarning = null);
-
     if (!await Geolocator.isLocationServiceEnabled()) {
-      setState(() => _gpsWarning = 'กรุณาเปิด GPS เพื่อให้ตำแหน่งอัปเดตสด');
+      if (mounted) {
+        setState(() => _gpsWarning = 'กรุณาเปิด GPS');
+      }
       return;
     }
 
-    var perm = await Geolocator.checkPermission();
-    if (perm == LocationPermission.denied) {
-      perm = await Geolocator.requestPermission();
+    var permission = await Geolocator.checkPermission();
+
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
     }
-    if (perm == LocationPermission.denied ||
-        perm == LocationPermission.deniedForever) {
-      setState(() => _gpsWarning = 'แอปไม่ได้รับอนุญาตเข้าถึงตำแหน่ง');
+
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      if (mounted) {
+        setState(() => _gpsWarning = 'ไม่ได้รับอนุญาตให้ใช้ตำแหน่ง');
+      }
       return;
     }
+
+    if (mounted) setState(() => _gpsWarning = null);
 
     _gpsSub?.cancel();
     _gpsSub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 10,
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 5,
       ),
     ).listen(
-      (pos) => _updateRiderPositionInFirestore(riderId, pos),
-      onError: (e) {
-        debugPrint('GPS stream error: $e');
-        if (!mounted) return;
-        setState(() => _gpsWarning = 'สัญญาณ GPS ขาดหาย');
+      (pos) {
+        _gpsPosition = pos;
+
+        final current = LatLng(pos.latitude, pos.longitude);
+
+        if (pos.heading.isFinite &&
+            pos.heading >= 0 &&
+            pos.heading <= 360) {
+          _gpsHeading = pos.heading;
+        }
+
+        if (pos.speed < 1.0 && _phoneHeading != null) {
+          _bearing = _smoothBearing(_bearing, _phoneHeading!, 0.20);
+        }
+
+        if (mounted) {
+          setState(() {
+            _myPos = current;
+            _setRiderMarker(current);
+          });
+        }
+
+        _writeRiderPosition(riderId, pos);
+
+        _refreshSelectedRouteIfNeeded(current);
+
+        if (_navigationMode) {
+          _updateNavigationCamera(pos);
+        }
+      },
+      onError: (_) {
+        if (mounted) {
+          setState(() => _gpsWarning = 'สัญญาณ GPS ขาดหาย');
+        }
       },
     );
   }
 
-  void _updateRiderPositionInFirestore(String riderId, Position pos) {
+  /// เขียนตำแหน่งไรเดอร์ขึ้น Firestore แบบ throttle
+  /// (เดิมเขียนทุกครั้งที่ stream ยิง event ซึ่งอาจถี่มากตาม distanceFilter)
+  void _writeRiderPosition(String riderId, Position pos) {
+    final now = DateTime.now();
+
+    if (_lastPositionWrite != null &&
+        now.difference(_lastPositionWrite!) < _minPositionWriteInterval) {
+      return;
+    }
+
+    _lastPositionWrite = now;
+
     FirebaseFirestore.instance.collection('riders').doc(riderId).update({
       'latitude': pos.latitude,
       'longitude': pos.longitude,
+    });
+  }
+
+  void _startCompass() {
+    _compassSub?.cancel();
+
+    _compassSub = FlutterCompass.events?.listen((event) {
+      final heading = event.headingForCameraMode ?? event.heading;
+
+      if (heading == null || !heading.isFinite) return;
+
+      _phoneHeading = heading;
+
+      final gps = _gpsPosition;
+      final usePhoneHeading = gps == null || gps.speed < 1.0;
+
+      if (!usePhoneHeading) return;
+
+      _bearing = _smoothBearing(_bearing, heading, 0.20);
+
+      if (_navigationMode) {
+        if (gps != null) {
+          _updateNavigationCamera(gps);
+        } else if (_myPos != null) {
+          final target = _navBearing(_myPos!);
+          _bearing = _smoothBearing(_bearing, target, 0.20);
+
+          // ล็อกไรเดอร์ไว้กลางจอเป๊ะๆ เสมอ (ไม่ใช้ look-ahead offset)
+          _animateNavCamera(
+            CameraPosition(
+              target: _myPos!,
+              zoom: 18.0,
+              tilt: 0,
+              bearing: _bearing,
+            ),
+          );
+        }
+      }
     });
   }
 
@@ -247,62 +357,105 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
         .where('rider_pickup_id', isEqualTo: riderRef)
         .where('status', whereIn: _activeStatuses)
         .snapshots()
-        .listen(_handleOrderSnapshot);
+        .listen((snap) {
+      _loadJobs(
+        snap,
+        pickup: true,
+        version: ++_pickupVersion,
+      );
+    });
 
     _deliverySub = FirebaseFirestore.instance
         .collection('orders')
         .where('rider_delivery_id', isEqualTo: riderRef)
         .where('status', whereIn: _activeStatuses)
         .snapshots()
-        .listen(_handleOrderSnapshot);
+        .listen((snap) {
+      _loadJobs(
+        snap,
+        pickup: false,
+        version: ++_deliveryVersion,
+      );
+    });
   }
 
-  Future<void> _handleOrderSnapshot(QuerySnapshot snap) async {
-    final incoming = <String>{};
+  Future<void> _loadJobs(
+    QuerySnapshot snap, {
+    required bool pickup,
+    required int version,
+  }) async {
+    final result = <String, _OrderDest>{};
 
     for (final doc in snap.docs) {
-      incoming.add(doc.id);
-      final data = doc.data() as Map<String, dynamic>;
+      try {
+        final order = doc.data() as Map<String, dynamic>;
+        final addressRef = order['address_id'];
 
-      final addressRef = data['address_id'] as DocumentReference?;
-      if (addressRef == null) continue;
+        if (addressRef is! DocumentReference) continue;
 
-      final addressSnap = await addressRef.get();
-      final addr = addressSnap.data() as Map<String, dynamic>?;
-      final lat = (addr?['latitude'] as num?)?.toDouble();
-      final lng = (addr?['longitude'] as num?)?.toDouble();
-      if (lat == null || lng == null) continue;
+        final addressSnap = await addressRef.get();
+        final address = addressSnap.data() as Map<String, dynamic>?;
 
-      final customer = await _fetchCustomer(data['customer_id']);
+        final lat = (address?['latitude'] as num?)?.toDouble();
+        final lng = (address?['longitude'] as num?)?.toDouble();
 
-      _jobs[doc.id] = _OrderDest(
-        addressText: addr?['address_text'] ?? 'ปลายทาง',
-        lat: lat,
-        lng: lng,
-        customerName: customer.$1,
-        customerImageUrl: customer.$2,
-        customerPhone: customer.$3,
-        orderNote: data['note'] as String?,
-      );
+        if (lat == null || lng == null) continue;
+
+        final customer = await _fetchCustomer(order['customer_id']);
+
+        result[doc.id] = _OrderDest(
+          address: address?['address_text']?.toString() ?? 'ปลายทาง',
+          lat: lat,
+          lng: lng,
+          name: customer.$1,
+          image: customer.$2,
+          phone: customer.$3,
+          note: order['note']?.toString(),
+        );
+      } catch (_) {}
     }
 
-    _jobs.removeWhere((id, _) => !incoming.contains(id));
-    _routeCache.removeWhere((id, _) => !incoming.contains(id));
+    final latest = pickup ? _pickupVersion : _deliveryVersion;
+    if (version != latest || !mounted) return;
 
-    if (mounted) setState(() {});
-    _rebuildJobsOnMap();
+    if (pickup) {
+      _pickupJobs
+        ..clear()
+        ..addAll(result);
+    } else {
+      _deliveryJobs
+        ..clear()
+        ..addAll(result);
+    }
+
+    _jobs
+      ..clear()
+      ..addAll(_pickupJobs)
+      ..addAll(_deliveryJobs);
+
+    _routeCache.removeWhere((id, _) => !_jobs.containsKey(id));
+    // เคลียร์ icon cache ของ job ที่หายไปด้วย ไม่งั้น memory จะค่อยๆโตขึ้นเรื่อยๆ
+    _jobMarkerIcons.removeWhere((id, _) => !_jobs.containsKey(id));
+
+    if (_selectedJobId == null || !_jobs.containsKey(_selectedJobId)) {
+      _selectedJobId = _jobs.isEmpty ? null : _jobs.keys.first;
+      _navigationMode = false;
+      _lastRouteOrigin = null;
+      _gpsHeading = null;
+      _lastRouteIndex = null;
+    }
+
+    setState(() {});
+    _rebuildMap();
   }
 
-  Future<(String, String?, String?)> _fetchCustomer(
-    dynamic customerIdRaw,
-  ) async {
+  Future<(String, String?, String?)> _fetchCustomer(dynamic value) async {
     DocumentReference? ref;
 
-    if (customerIdRaw is DocumentReference) {
-      ref = customerIdRaw;
-    } else if (customerIdRaw is String && customerIdRaw.isNotEmpty) {
-      ref =
-          FirebaseFirestore.instance.collection('customers').doc(customerIdRaw);
+    if (value is DocumentReference) {
+      ref = value;
+    } else if (value is String && value.isNotEmpty) {
+      ref = FirebaseFirestore.instance.collection('customers').doc(value);
     }
 
     if (ref == null) return ('ลูกค้า', null, null);
@@ -310,445 +463,845 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     try {
       final snap = await ref.get();
       final data = snap.data() as Map<String, dynamic>?;
-      final name = (data?['fullname'] ?? data?['username'] ?? 'ลูกค้า') as String;
-      final img = data?['profile_image'] as String?;
-      final phone = data?['phone'] as String?;
-      return (name, img, phone);
-    } catch (e) {
-      debugPrint('fetchCustomer error: $e');
+
+      return (
+        (data?['fullname'] ?? data?['username'] ?? 'ลูกค้า').toString(),
+        data?['profile_image']?.toString(),
+        data?['phone']?.toString(),
+      );
+    } catch (_) {
       return ('ลูกค้า', null, null);
     }
   }
 
-  void _rebuildJobsOnMap() {
-    if (_myPosition == null) return;
+  void _rebuildMap() {
+    if (_myPos == null) return;
 
-    _markers.removeWhere((m) => m.markerId.value != 'rider');
+    // เก็บ marker ของ job ที่ยังมีอยู่ (ใช้ icon จาก cache ถ้ามีแล้ว)
+    // ไม่ลบแล้วสร้างใหม่ทุกครั้งเหมือนเดิม เพื่อลดการกระพริบและงานซ้ำ
+    _markers.removeWhere((m) =>
+        m.markerId.value != 'rider' &&
+        !_jobs.keys.any((id) => 'job_$id' == m.markerId.value));
 
-    var i = 0;
+    _polylines.clear();
+
     for (final entry in _jobs.entries) {
-      final orderId = entry.key;
+      final id = entry.key;
       final job = entry.value;
-      final dest = LatLng(job.lat, job.lng);
-      final color = _routeColors[i % _routeColors.length];
 
-      _updateDestinationMarker(orderId, job, dest, color);
-      _drawCachedRouteIfAny(orderId, color);
-      _fetchAndDrawRoute(orderId, _myPosition!, dest, color);
+      _addCustomerMarker(id, job);
 
-      i++;
+      if (id == _selectedJobId) {
+        _drawCachedRoute(id);
+      }
+
+      _loadRoute(id, job);
     }
   }
 
-  void _updateDestinationMarker(
-    String orderId,
-    _OrderDest job,
-    LatLng dest,
-    Color color,
-  ) {
-    _makeProfileMarker(job.customerImageUrl, color).then((icon) {
-      if (!mounted) return;
-      setState(() {
-        _markers
-          ..removeWhere((m) => m.markerId.value == 'dest_$orderId')
-          ..add(Marker(
-            markerId: MarkerId('dest_$orderId'),
-            position: dest,
+  Future<void> _addCustomerMarker(String id, _OrderDest job) async {
+    // ถ้ามี icon ใน cache แล้ว ใช้ทันทีโดยไม่ต้องดาวน์โหลดรูปซ้ำ
+    final cachedIcon = _jobMarkerIcons[id];
+
+    if (cachedIcon != null) {
+      _upsertJobMarker(id, job, cachedIcon);
+      return;
+    }
+
+    // กันเรียกซ้อนหลายครั้งพร้อมกันสำหรับ job เดียวกัน
+    if (_jobIconsLoading.contains(id)) return;
+    _jobIconsLoading.add(id);
+
+    try {
+      final icon = await _makeMarker(job.image);
+      _jobMarkerIcons[id] = icon;
+
+      if (!mounted || !_jobs.containsKey(id)) return;
+
+      _upsertJobMarker(id, job, icon);
+    } finally {
+      _jobIconsLoading.remove(id);
+    }
+  }
+
+  void _upsertJobMarker(String id, _OrderDest job, BitmapDescriptor icon) {
+    setState(() {
+      _markers
+        ..removeWhere((m) => m.markerId.value == 'job_$id')
+        ..add(
+          Marker(
+            markerId: MarkerId('job_$id'),
+            position: LatLng(job.lat, job.lng),
             icon: icon,
+            onTap: () => _selectJob(id),
             infoWindow: InfoWindow(
-              title: '👤 ${job.customerName}',
-              snippet: job.addressText,
+              title: job.name,
+              snippet: job.address,
             ),
-          ));
-      });
+          ),
+        );
     });
   }
 
-  void _drawCachedRouteIfAny(String orderId, Color color) {
-    final cached = _routeCache[orderId];
-    if (cached == null) return;
+  void _selectJob(String id) {
+    if (!_jobs.containsKey(id)) return;
 
     setState(() {
-      _polylines
-        ..removeWhere((p) => p.polylineId.value == 'route_$orderId')
-        ..add(Polyline(
-          polylineId: PolylineId('route_$orderId'),
-          points: cached,
-          color: color,
-          width: 5,
-        ));
+      _selectedJobId = id;
+      _navigationMode = false;
+      _lastRouteOrigin = null;
+      _lastRouteIndex = null;
+      _polylines.clear();
+      _drawCachedRoute(id);
     });
+
+    final job = _jobs[id]!;
+
+    if (_routeCache[id] == null) {
+      _loadRoute(id, job);
+    }
+
+    _focusJob();
   }
 
-  Future<BitmapDescriptor> _makeProfileMarker(
-    String? imageUrl,
-    Color borderColor,
-  ) async {
-    const double size = 120;
-    const double borderWidth = 6;
-    const double photoRadius = size / 2 - borderWidth;
+  void _drawCachedRoute(String id) {
+    if (id != _selectedJobId) return;
+
+    final points = _routeCache[id];
+    if (points == null) return;
+
+    _polylines
+      ..clear()
+      ..add(
+        Polyline(
+          polylineId: const PolylineId('route'),
+          points: points,
+          color: _blue,
+          width: 6,
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
+        ),
+      );
+  }
+
+  Future<void> _loadRoute(String id, _OrderDest job) async {
+    final me = _myPos;
+    if (me == null) return;
+
+    final uri = Uri.parse(
+      'https://router.project-osrm.org/route/v1/driving/'
+      '${me.longitude},${me.latitude};${job.lng},${job.lat}'
+      '?overview=full&geometries=geojson',
+    );
+
+    try {
+      final res = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) return;
+
+      final route = (jsonDecode(res.body)['routes'] as List?)?.first;
+      if (route == null || !mounted || !_jobs.containsKey(id)) return;
+
+      final distance = (route['distance'] as num).toDouble();
+      final duration = (route['duration'] as num).toDouble();
+
+      final points = (route['geometry']['coordinates'] as List)
+          .map(
+            (p) => LatLng(
+              (p[1] as num).toDouble(),
+              (p[0] as num).toDouble(),
+            ),
+          )
+          .toList();
+
+      _routeCache[id] = points;
+
+      if (id == _selectedJobId) {
+        _lastRouteIndex = null;
+      }
+
+      setState(() {
+        final current = _jobs[id];
+        if (current == null) return;
+
+        current.distance = distance >= 1000
+            ? '${(distance / 1000).toStringAsFixed(1)} กม.'
+            : '${distance.toInt()} ม.';
+        current.duration = '${(duration / 60).ceil()} นาที';
+
+        if (_selectedJobId == id) {
+          _drawCachedRoute(id);
+        }
+      });
+    } catch (_) {}
+  }
+
+  void _focusJob() {
+    final me = _myPos;
+    final id = _selectedJobId;
+
+    if (me == null || id == null) return;
+
+    final job = _jobs[id];
+    if (job == null) return;
+
+    final dest = LatLng(job.lat, job.lng);
+
+    _programmaticMove = true;
+
+    _map?.animateCamera(
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(
+            min(me.latitude, dest.latitude),
+            min(me.longitude, dest.longitude),
+          ),
+          northeast: LatLng(
+            max(me.latitude, dest.latitude),
+            max(me.longitude, dest.longitude),
+          ),
+        ),
+        72,
+      ),
+    );
+  }
+
+  void _toggleNavigation() {
+    if (_myPos == null || _selectedJobId == null) return;
+
+    setState(() => _navigationMode = !_navigationMode);
+
+    if (_navigationMode) {
+      _lastRouteIndex = null;
+      _lastNavCameraUpdate = null;
+
+      final rider = _gpsPosition != null
+          ? LatLng(_gpsPosition!.latitude, _gpsPosition!.longitude)
+          : _myPos!;
+
+      final initialBearing = _navBearing(rider);
+      _bearing = initialBearing;
+
+      final pos = _gpsPosition;
+      if (pos != null) {
+        _updateNavigationCamera(pos, force: true);
+      } else {
+        // ล็อกไรเดอร์ไว้กลางจอเป๊ะๆ เสมอ (ไม่ใช้ look-ahead offset)
+        _animateNavCamera(
+          CameraPosition(
+            target: rider,
+            zoom: 18.0,
+            tilt: 0,
+            bearing: _bearing,
+          ),
+        );
+      }
+    } else {
+      _focusJob();
+    }
+  }
+
+  void _updateNavigationCamera(
+    Position pos, {
+    bool force = false,
+  }) {
+    if (!_navigationMode || _map == null) return;
+
+    final now = DateTime.now();
+    if (!force &&
+        _lastNavCameraUpdate != null &&
+        now.difference(_lastNavCameraUpdate!).inMilliseconds < 450) {
+      return;
+    }
+
+    _lastNavCameraUpdate = now;
+
+    final speed = max(0.0, pos.speed);
+    final rider = LatLng(pos.latitude, pos.longitude);
+
+    final zoom = speed < 2
+        ? 18.2
+        : speed < 8
+            ? 17.8
+            : speed < 18
+                ? 17.2
+                : 16.7;
+
+    // ใช้ look-ahead แค่สำหรับ "หาทิศทาง" ที่จะหมุนกล้องตามเส้นทาง
+    // ไม่เอามาขยับ target แล้ว เพื่อให้ไรเดอร์อยู่กลางจอเป๊ะๆ เสมอ
+    final directionLookAhead = (35 + speed * 3).clamp(35.0, 90.0);
+    final routeDirection = _routeDirection(rider, directionLookAhead);
+
+    final targetBearing = routeDirection?.$1 ?? _navBearing(rider);
+
+    // force = true คือตอนเพิ่งกดปุ่มนำทาง (หรือกดใหม่อีกครั้ง) ต้องการให้กล้อง
+    // หันไปทิศที่ถูกต้องทันที ไม่ใช่ค่อยๆ หมุนไปหาทิศทาง
+    final smoothFactor =
+        force ? 1.0 : (routeDirection != null ? 0.35 : 0.22);
+
+    _bearing = _smoothBearing(_bearing, targetBearing, smoothFactor);
+
+    _animateNavCamera(
+      CameraPosition(
+        target: rider,
+        zoom: zoom,
+        tilt: 0,
+        bearing: _bearing,
+      ),
+    );
+  }
+
+  double _navBearing(LatLng rider) {
+    final route = _routeDirection(rider, 65);
+    if (route != null) return route.$1;
+    if (_gpsHeading != null) return _gpsHeading!;
+    if (_phoneHeading != null) return _phoneHeading!;
+    return _bearing;
+  }
+
+  (double, LatLng)? _routeDirection(
+    LatLng rider,
+    double lookAheadMeters,
+  ) {
+    final id = _selectedJobId;
+    if (id == null) return null;
+
+    final points = _routeCache[id];
+    if (points == null || points.length < 2) return null;
+
+    final searchStart = _lastRouteIndex == null
+        ? 0
+        : max(0, _lastRouteIndex! - 3);
+    final searchEnd = _lastRouteIndex == null
+        ? points.length - 1
+        : min(points.length - 1, _lastRouteIndex! + 60);
+
+    var nearestIndex = searchStart;
+    var nearestDistance = double.infinity;
+
+    for (var i = searchStart; i <= searchEnd; i++) {
+      final d = Geolocator.distanceBetween(
+        rider.latitude,
+        rider.longitude,
+        points[i].latitude,
+        points[i].longitude,
+      );
+
+      if (d < nearestDistance) {
+        nearestDistance = d;
+        nearestIndex = i;
+      }
+    }
+
+    if (nearestDistance > 120 || nearestIndex >= points.length - 1) {
+      return null;
+    }
+
+    if (_lastRouteIndex != null && nearestIndex < _lastRouteIndex! - 2) {
+      nearestIndex = _lastRouteIndex!;
+    }
+
+    _lastRouteIndex = nearestIndex;
+
+    var distance = 0.0;
+    var targetIndex = nearestIndex + 1;
+    final effectiveLookAhead = max(lookAheadMeters, 30.0);
+
+    for (var i = nearestIndex; i < points.length - 1; i++) {
+      distance += Geolocator.distanceBetween(
+        points[i].latitude,
+        points[i].longitude,
+        points[i + 1].latitude,
+        points[i + 1].longitude,
+      );
+
+      targetIndex = i + 1;
+
+      if (distance >= effectiveLookAhead) {
+        break;
+      }
+    }
+
+    final from = points[nearestIndex];
+    var to = points[targetIndex];
+
+    if (Geolocator.distanceBetween(
+          from.latitude,
+          from.longitude,
+          to.latitude,
+          to.longitude,
+        ) <
+        8 &&
+        targetIndex < points.length - 1) {
+      to = points[min(targetIndex + 3, points.length - 1)];
+    }
+
+    return (_bearingBetween(from, to), to);
+  }
+
+  double _bearingBetween(LatLng from, LatLng to) {
+    final lat1 = from.latitude * pi / 180;
+    final lat2 = to.latitude * pi / 180;
+    final dLng = (to.longitude - from.longitude) * pi / 180;
+
+    final y = sin(dLng) * cos(lat2);
+    final x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLng);
+
+    return (atan2(y, x) * 180 / pi + 360) % 360;
+  }
+
+  void _animateNavCamera(CameraPosition camera) {
+    final controller = _map;
+    if (controller == null || _cameraAnimating) return;
+
+    _cameraAnimating = true;
+    _programmaticMove = true;
+
+    controller
+        .animateCamera(CameraUpdate.newCameraPosition(camera))
+        .whenComplete(() {
+          _cameraAnimating = false;
+        });
+  }
+
+  double _smoothBearing(
+    double current,
+    double target,
+    double factor,
+  ) {
+    var diff = (target - current + 540) % 360 - 180;
+    final maxStep = 18.0;
+    if (diff > maxStep) diff = maxStep;
+    if (diff < -maxStep) diff = -maxStep;
+    return (current + diff * factor + 360) % 360;
+  }
+
+  void _refreshSelectedRouteIfNeeded(LatLng current) {
+    final id = _selectedJobId;
+    if (id == null) return;
+
+    if (_lastRouteOrigin != null) {
+      final moved = Geolocator.distanceBetween(
+        _lastRouteOrigin!.latitude,
+        _lastRouteOrigin!.longitude,
+        current.latitude,
+        current.longitude,
+      );
+
+      if (moved < 30) return;
+    }
+
+    _lastRouteOrigin = current;
+
+    final job = _jobs[id];
+    if (job == null) return;
+
+    _routeCache.remove(id);
+    _lastRouteIndex = null;
+    _loadRoute(id, job);
+  }
+
+  Future<BitmapDescriptor> _makeMarker(String? imageUrl) async {
+    const size = 110.0;
+    const radius = 49.0;
 
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
+    final center = const Offset(size / 2, size / 2);
 
-    canvas.drawCircle(
-      const Offset(size / 2, size / 2),
-      size / 2,
-      Paint()..color = borderColor,
-    );
+    canvas.drawCircle(center, size / 2, Paint()..color = _blue);
 
-    if (imageUrl != null && imageUrl.isNotEmpty) {
+    if (imageUrl?.isNotEmpty == true) {
       try {
-        final res =
-            await http.get(Uri.parse(imageUrl)).timeout(const Duration(seconds: 5));
+        final res = await http
+            .get(Uri.parse(imageUrl!))
+            .timeout(const Duration(seconds: 5));
+
         if (res.statusCode == 200) {
           final codec = await ui.instantiateImageCodec(
             res.bodyBytes,
             targetWidth: size.toInt(),
             targetHeight: size.toInt(),
           );
-          final frame = await codec.getNextFrame();
 
-          canvas
-            ..save()
-            ..clipPath(Path()
-              ..addOval(Rect.fromCircle(
-                center: const Offset(size / 2, size / 2),
-                radius: photoRadius,
-              )))
-            ..drawImageRect(
-              frame.image,
-              Rect.fromLTWH(
-                0,
-                0,
-                frame.image.width.toDouble(),
-                frame.image.height.toDouble(),
-              ),
-              Rect.fromCircle(
-                center: const Offset(size / 2, size / 2),
-                radius: photoRadius,
-              ),
-              Paint(),
-            )
-            ..restore();
+          final image = (await codec.getNextFrame()).image;
 
-          return _toDescriptor(recorder, size);
+          canvas.save();
+          canvas.clipPath(
+            Path()
+              ..addOval(
+                Rect.fromCircle(center: center, radius: radius),
+              ),
+          );
+          canvas.drawImageRect(
+            image,
+            Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+            Rect.fromCircle(center: center, radius: radius),
+            Paint(),
+          );
+          canvas.restore();
+
+          return _descriptor(recorder, size);
         }
-      } catch (e) {
-        debugPrint('marker image error: $e');
-      }
+      } catch (_) {}
     }
 
-    _drawPersonIcon(canvas, size, photoRadius, borderColor);
-    return _toDescriptor(recorder, size);
-  }
-
-  void _drawPersonIcon(Canvas canvas, double size, double r, Color color) {
     canvas.drawCircle(
-      Offset(size / 2, size / 2),
-      r,
-      Paint()..color = color.withOpacity(0.2),
+      center,
+      radius,
+      Paint()..color = const Color(0xFFEAF6FF),
     );
-    final fill = Paint()..color = color;
-    canvas.drawCircle(Offset(size / 2, size / 2 - r * 0.2), r * 0.3, fill);
+
+    final paint = Paint()..color = _blue;
+    canvas.drawCircle(
+      Offset(size / 2, size / 2 - 10),
+      15,
+      paint,
+    );
     canvas.drawArc(
       Rect.fromCenter(
-        center: Offset(size / 2, size / 2 + r * 0.35),
-        width: r * 0.9,
-        height: r * 0.55,
+        center: Offset(size / 2, size / 2 + 24),
+        width: 44,
+        height: 26,
       ),
       0,
       pi,
       true,
-      fill,
+      paint,
     );
+
+    return _descriptor(recorder, size);
   }
 
-  Future<BitmapDescriptor> _toDescriptor(
+  Future<BitmapDescriptor> _descriptor(
     ui.PictureRecorder recorder,
     double size,
   ) async {
-    final img = await recorder.endRecording().toImage(size.toInt(), size.toInt());
-    final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
-    return BitmapDescriptor.fromBytes(byteData!.buffer.asUint8List());
-  }
+    final image =
+        await recorder.endRecording().toImage(size.toInt(), size.toInt());
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
 
-  Future<void> _fetchAndDrawRoute(
-    String orderId,
-    LatLng from,
-    LatLng to,
-    Color color,
-  ) async {
-    final url = Uri.parse(
-      'https://router.project-osrm.org/route/v1/driving/'
-      '${from.longitude},${from.latitude};${to.longitude},${to.latitude}'
-      '?overview=full&geometries=geojson',
-    );
-
-    try {
-      final res = await http.get(url).timeout(const Duration(seconds: 10));
-      if (res.statusCode != 200) return;
-
-      final body = jsonDecode(res.body);
-      final route = (body['routes'] as List?)?.first;
-      if (route == null) return;
-
-      final distanceM = (route['distance'] as num).toDouble();
-      final durationS = (route['duration'] as num).toDouble();
-      final points = (route['geometry']['coordinates'] as List)
-          .map((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()))
-          .toList();
-
-      if (!mounted) return;
-
-      _routeCache[orderId] = points;
-
-      setState(() {
-        final job = _jobs[orderId];
-        if (job != null) {
-          job.distanceText = distanceM >= 1000
-              ? '${(distanceM / 1000).toStringAsFixed(1)} กม.'
-              : '${distanceM.toInt()} ม.';
-          job.durationText = '${(durationS / 60).ceil()} นาที';
-        }
-        _polylines
-          ..removeWhere((p) => p.polylineId.value == 'route_$orderId')
-          ..add(Polyline(
-            polylineId: PolylineId('route_$orderId'),
-            points: points,
-            color: color,
-            width: 5,
-          ));
-      });
-    } catch (e) {
-      debugPrint('OSRM error: $e');
-    }
-  }
-
-  void _moveToMyLocation() {
-    if (_myPosition == null) return;
-    setState(() => _isFollowingRider = !_isFollowingRider);
-    if (_isFollowingRider) {
-      _mapController?.animateCamera(
-        CameraUpdate.newCameraPosition(
-          CameraPosition(target: _myPosition!, zoom: 15),
-        ),
-      );
-    }
+    return BitmapDescriptor.fromBytes(bytes!.buffer.asUint8List());
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F4F8),
+      backgroundColor: const Color(0xFFF4F6F8),
       appBar: AppBarRider(
         riderName: _riderName,
         riderId: _riderId ?? '',
         profileImage: _riderImage,
       ),
-      body: _buildBody(),
+      body: _body(),
     );
   }
 
-  Widget _buildBody() {
-    if (_isLocating && _myPosition == null) {
+  Widget _body() {
+    if (_loadingLocation && _myPos == null) {
       return const Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircularProgressIndicator(color: Color(0xFF0593FF)),
-            SizedBox(height: 16),
-            Text('กำลังดึงตำแหน่ง...', style: TextStyle(color: Colors.grey)),
-          ],
-        ),
+        child: CircularProgressIndicator(color: _blue),
       );
     }
 
-    if (_locationError != null && _myPosition == null) {
-      return _buildLocationErrorView();
+    if (_locationError != null && _myPos == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(30),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _locationError!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 15, color: _subText),
+              ),
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: _riderId == null
+                    ? null
+                    : () => _listenPosition(_riderId!),
+                style: FilledButton.styleFrom(backgroundColor: _blue),
+                child: const Text('ลองใหม่'),
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
     return Stack(
       children: [
-        _buildMap(),
-        if (_gpsWarning != null) _buildGpsWarningBanner(),
-        if (_jobs.isNotEmpty) _buildJobCardsList(),
-        _buildFollowButton(),
+        GoogleMap(
+          initialCameraPosition: CameraPosition(
+            target: _myPos!,
+            zoom: 14,
+          ),
+          onMapCreated: (controller) {
+            _map = controller;
+            if (_selectedJobId != null) {
+              Future.delayed(const Duration(milliseconds: 250), _focusJob);
+            }
+          },
+          onCameraMoveStarted: () {
+            if (_navigationMode && !_programmaticMove) {
+              setState(() => _navigationMode = false);
+            }
+          },
+          onCameraIdle: () {
+            _programmaticMove = false;
+          },
+          markers: _markers,
+          polylines: _polylines,
+          myLocationEnabled: false,
+          myLocationButtonEnabled: false,
+          zoomControlsEnabled: false,
+          mapToolbarEnabled: false,
+          // ตอนอยู่ในโหมดนำทาง ล็อกไม่ให้ลาก/ซูม/หมุน/เอียงแผนที่ด้วยมือ
+          // กันแตะจอเบาๆ แล้วกล้องขยับนิดเดียวจนหลุดโหมดนำทางเอง
+          // ถ้าจะออกจากโหมดนำทางต้องกดปุ่มนำทางเท่านั้น
+          scrollGesturesEnabled: !_navigationMode,
+          zoomGesturesEnabled: !_navigationMode,
+          rotateGesturesEnabled: !_navigationMode,
+          tiltGesturesEnabled: !_navigationMode,
+        ),
+        if (_gpsWarning != null) _gpsBanner(),
+        if (_jobs.isNotEmpty) _jobsButton(),
+        if (_selectedJobId != null) _selectedCard(),
+        _navigationButton(),
       ],
     );
   }
 
-  Widget _buildLocationErrorView() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.location_off_rounded, size: 72, color: Colors.grey.shade300),
-            const SizedBox(height: 16),
-            Text(
-              _locationError!,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 15, color: Colors.black54),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: () => _riderId != null ? _listenMyPosition(_riderId!) : null,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('ลองใหม่'),
-              style: FilledButton.styleFrom(backgroundColor: const Color(0xFF0593FF)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMap() {
-    return GoogleMap(
-      initialCameraPosition: CameraPosition(target: _myPosition!, zoom: 14),
-      onMapCreated: (ctrl) => _mapController = ctrl,
-      onCameraMove: (_) {
-        if (_isFollowingRider) {
-          setState(() => _isFollowingRider = false);
-        }
-      },
-      markers: _markers,
-      polylines: _polylines,
-      myLocationEnabled: false,
-      myLocationButtonEnabled: false,
-      zoomControlsEnabled: false,
-      mapToolbarEnabled: false,
-    );
-  }
-
-  Widget _buildGpsWarningBanner() {
+  Widget _gpsBanner() {
     return Positioned(
-      top: 16,
-      left: 16,
-      right: 16,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: Colors.amber.shade50,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.amber.shade300),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.gps_not_fixed_rounded, size: 18, color: Colors.amber.shade800),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                _gpsWarning!,
-                style: TextStyle(fontSize: 12.5, color: Colors.amber.shade900),
-              ),
-            ),
-            TextButton(
-              onPressed: () => _riderId != null ? _startGps(_riderId!) : null,
-              child: const Text('ลองใหม่', style: TextStyle(fontSize: 12.5)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildJobCardsList() {
-    return Positioned(
-      top: _gpsWarning != null ? 64 : 16,
-      left: 16,
-      right: 16,
-      child: Column(
-        children: _jobs.entries.toList().asMap().entries.map((e) {
-          final index = e.key;
-          final job = e.value.value;
-          final color = _routeColors[index % _routeColors.length];
-          return _buildJobCard(job, color);
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget _buildFollowButton() {
-    return Positioned(
-      right: 16,
-      bottom: 32,
-      child: FloatingActionButton(
-        onPressed: _moveToMyLocation,
-        backgroundColor: _isFollowingRider ? const Color(0xFF0593FF) : Colors.white,
-        foregroundColor: _isFollowingRider ? Colors.white : const Color(0xFF0593FF),
-        elevation: 6,
-        shape: const CircleBorder(),
-        child: Icon(
-          _isFollowingRider ? Icons.my_location_rounded : Icons.location_searching_rounded,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildJobCard(_OrderDest job, Color color) {
-    return GestureDetector(
-      onTap: () => _showJobDetail(job, color),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.08),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
-            ),
-          ],
-          border: Border(left: BorderSide(color: color, width: 5)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      top: 12,
+      left: 12,
+      right: 12,
+      child: SafeArea(
+        bottom: false,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: _border),
+          ),
           child: Row(
             children: [
-              _buildAvatar(job.customerImageUrl, color),
-              const SizedBox(width: 12),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      job.customerName,
-                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      job.addressText,
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                child: Text(
+                  _gpsWarning!,
+                  style: const TextStyle(fontSize: 12, color: _text),
                 ),
               ),
-              const SizedBox(width: 8),
-              job.distanceText != null
-                  ? Column(
+              TextButton(
+                onPressed: _riderId == null
+                    ? null
+                    : () => _startGps(_riderId!),
+                child: const Text('ลองใหม่'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _jobsButton() {
+    return Positioned(
+      top: _gpsWarning == null ? 14 : 70,
+      left: 14,
+      child: SafeArea(
+        bottom: false,
+        child: Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            onTap: _showJobs,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _border),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.06),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Text(
+                'งานของฉัน  ${_jobs.length}',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: _text,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _navigationButton() {
+    return Positioned(
+      right: 14,
+      bottom: _jobs.isEmpty ? 28 : 150,
+      child: InkWell(
+        onTap: _toggleNavigation,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(
+            color: _navigationMode ? _blue : Colors.white,
+            shape: BoxShape.circle,
+            border: Border.all(color: _navigationMode ? _blue : _border),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.08),
+                blurRadius: 10,
+              ),
+            ],
+          ),
+          child: Icon(
+            _navigationMode ? Icons.navigation_rounded : Icons.my_location_rounded,
+            color: _navigationMode ? Colors.white : _blue,
+            size: 21,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _selectedCard() {
+    final id = _selectedJobId;
+    final job = id == null ? null : _jobs[id];
+
+    if (job == null) return const SizedBox.shrink();
+
+    return Positioned(
+      left: 12,
+      right: 12,
+      bottom: 12,
+      child: SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 13, 14, 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _border),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.10),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  _avatar(job.image, 46),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          job.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: _text,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          job.address,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 11.5, color: _subText),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  if (job.distance != null)
+                    Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         Text(
-                          job.distanceText!,
-                          style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w700),
+                          job.distance!,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: _blue,
+                          ),
                         ),
+                        const SizedBox(height: 2),
                         Text(
-                          job.durationText ?? '',
-                          style: TextStyle(color: Colors.grey.shade400, fontSize: 11),
+                          job.duration ?? '',
+                          style: const TextStyle(fontSize: 10.5, color: _subText),
                         ),
                       ],
                     )
-                  : SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: color),
+                  else
+                    const SizedBox(
+                      width: 17,
+                      height: 17,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.7,
+                        color: _blue,
+                      ),
                     ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              const Divider(height: 1, color: Color(0xFFF0F2F5)),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: _toggleNavigation,
+                      child: Text(
+                        _navigationMode ? 'หยุดนำทาง' : 'เริ่มนำทาง',
+                        style: TextStyle(
+                          color: _navigationMode ? _blue : _text,
+                          fontWeight:
+                              _navigationMode ? FontWeight.w700 : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Container(
+                    width: 1,
+                    height: 22,
+                    color: const Color(0xFFF0F2F5),
+                  ),
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => _showDetail(job),
+                      child: const Text(
+                        'รายละเอียด',
+                        style: TextStyle(
+                          color: _blue,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -756,129 +1309,232 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     );
   }
 
-  void _showJobDetail(_OrderDest job, Color color) {
+  void _showJobs() {
+    final entries = _jobs.entries.toList();
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (_) => Container(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
+      builder: (sheetContext) => SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 16),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 36,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(2),
+                  color: const Color(0xFFD0D5DD),
+                  borderRadius: BorderRadius.circular(20),
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                _buildAvatar(job.customerImageUrl, color),
-                const SizedBox(width: 12),
-                Text(
-                  job.customerName,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            if (job.distanceText != null)
+              const SizedBox(height: 16),
               Row(
                 children: [
-                  _infoChip(Icons.straight_rounded, job.distanceText!, color),
-                  const SizedBox(width: 10),
-                  _infoChip(Icons.access_time_rounded, job.durationText ?? '', color),
+                  const Expanded(
+                    child: Text(
+                      'งานของฉัน',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: _text,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '${entries.length} งาน',
+                    style: const TextStyle(fontSize: 12, color: _subText),
+                  ),
                 ],
               ),
-            if (job.distanceText != null) const SizedBox(height: 16),
-            _detailRow(Icons.location_on_rounded, job.addressText, color),
-            if (job.customerPhone != null && job.customerPhone!.isNotEmpty) ...[
               const SizedBox(height: 10),
-              _detailRow(Icons.phone_rounded, job.customerPhone!, color),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: entries.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (_, index) {
+                    final entry = entries[index];
+                    final selected = entry.key == _selectedJobId;
+                    final job = entry.value;
+
+                    return ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 2,
+                        vertical: 2,
+                      ),
+                      leading: _avatar(job.image, 42),
+                      title: Text(
+                        job.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight:
+                              selected ? FontWeight.w700 : FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        job.address,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11.5, color: _subText),
+                      ),
+                      trailing: job.distance == null
+                          ? null
+                          : Text(
+                              job.distance!,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: selected ? _blue : _subText,
+                              ),
+                            ),
+                      tileColor: selected ? _blue.withOpacity(0.05) : null,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      onTap: () {
+                        Navigator.pop(sheetContext);
+                        _selectJob(entry.key);
+                      },
+                    );
+                  },
+                ),
+              ),
             ],
-            if (job.orderNote != null && job.orderNote!.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              _detailRow(Icons.sticky_note_2_rounded, job.orderNote!, color),
-            ],
-          ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _detailRow(IconData icon, String text, Color color) {
+  void _showDetail(_OrderDest job) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(18, 10, 18, 22),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFD0D5DD),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  _avatar(job.image, 50),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      job.name,
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: _text,
+                      ),
+                    ),
+                  ),
+                  if (job.distance != null)
+                    Text(
+                      job.distance!,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: _blue,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              _detail('ที่อยู่', job.address),
+              if (job.phone?.isNotEmpty == true) ...[
+                const SizedBox(height: 10),
+                _detail('เบอร์โทรศัพท์', job.phone!),
+              ],
+              if (job.note?.isNotEmpty == true) ...[
+                const SizedBox(height: 10),
+                _detail('หมายเหตุ', job.note!),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _detail(String title, String value) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.06),
+        color: const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.2)),
+        border: Border.all(color: _border),
       ),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(text, style: const TextStyle(fontSize: 14, height: 1.5)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _infoChip(IconData icon, String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: color),
-          const SizedBox(width: 4),
           Text(
-            label,
-            style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.w600),
+            title,
+            style: const TextStyle(fontSize: 10.5, color: _subText),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 13, color: _text, height: 1.4),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildAvatar(String? imageUrl, Color color) {
-    if (imageUrl != null && imageUrl.isNotEmpty) {
+  Widget _avatar(String? url, double size) {
+    if (url?.isNotEmpty == true) {
       return ClipOval(
         child: Image.network(
-          imageUrl,
-          width: 42,
-          height: 42,
+          url!,
+          width: size,
+          height: size,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _placeholderAvatar(color),
+          errorBuilder: (_, __, ___) => _avatarFallback(size),
         ),
       );
     }
-    return _placeholderAvatar(color);
+
+    return _avatarFallback(size);
   }
 
-  Widget _placeholderAvatar(Color color) {
-    return CircleAvatar(
-      radius: 21,
-      backgroundColor: color.withOpacity(0.15),
-      child: Icon(Icons.person_rounded, size: 22, color: color),
+  Widget _avatarFallback(double size) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: _blue.withOpacity(0.10),
+        shape: BoxShape.circle,
+      ),
+      child: const Icon(Icons.person_rounded, color: _blue, size: 22),
     );
   }
 }

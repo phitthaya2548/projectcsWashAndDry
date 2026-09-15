@@ -1,14 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:developer';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:get/get_core/src/get_main.dart';
-import 'package:get/get_navigation/src/extension_navigation.dart';
+import 'package:get/get.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:wash_and_dry/config/config.dart';
+import 'package:wash_and_dry/widgets/main_shell_customer.dart';
 
 class CustomerOrderDetailScreen extends StatefulWidget {
   final String orderId;
   const CustomerOrderDetailScreen({super.key, required this.orderId});
-
   @override
   State<CustomerOrderDetailScreen> createState() =>
       _CustomerOrderDetailScreenState();
@@ -20,24 +23,47 @@ class _CustomerOrderDetailScreenState extends State<CustomerOrderDetailScreen> {
   Map<String, dynamic>? _address;
   Map<String, dynamic>? _riderPickup;
   Map<String, dynamic>? _staff;
-  Map<String, dynamic>? _store;
   Map<String, dynamic>? _riderDelivery;
-  StreamSubscription? _streamSubscription;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+  _streamSubscription;
   bool _loading = true;
+  bool _cancelling = false;
   String? _error;
-
   @override
   void initState() {
     super.initState();
     _listenOrder();
   }
 
-  void _listenOrder() {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  @override
+  void dispose() {
+    _streamSubscription?.cancel();
+    super.dispose();
+  }
 
+  Future<Map<String, dynamic>?> _resolveReference(dynamic value) async {
+    if (value is! DocumentReference) {
+      return null;
+    }
+    final snap = await value.get();
+    if (!snap.exists) {
+      return null;
+    }
+    final data = snap.data();
+    if (data is Map<String, dynamic>) {
+      return data;
+    }
+    return null;
+  }
+
+  Future<void> _listenOrder() async {
+    await _streamSubscription?.cancel();
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     _streamSubscription = FirebaseFirestore.instance
         .collection('orders')
         .doc(widget.orderId)
@@ -45,262 +71,385 @@ class _CustomerOrderDetailScreenState extends State<CustomerOrderDetailScreen> {
         .listen(
           (snap) async {
             if (!snap.exists) {
+              if (!mounted) return;
               setState(() {
                 _error = 'ไม่พบข้อมูลออเดอร์';
                 _loading = false;
               });
               return;
             }
-
-            final data = snap.data()!;
-
-            Future<Map<String, dynamic>?> resolve(String key) async {
-              if (data[key] is DocumentReference) {
-                final s = await (data[key] as DocumentReference).get();
-                return s.exists ? s.data() as Map<String, dynamic> : null;
-              }
-              return null;
+            final data = snap.data();
+            if (data == null) {
+              if (!mounted) return;
+              setState(() {
+                _error = 'ไม่พบข้อมูลออเดอร์';
+                _loading = false;
+              });
+              return;
             }
-
-            _customer = await resolve('customer_id');
-            _store = await resolve('store_id');
-            _address = await resolve('address_id');
-            _riderPickup = await resolve('rider_pickup_id');
-            _staff = await resolve('staff_id');
-            _riderDelivery = await resolve('rider_delivery_id');
-
-            if (mounted)
+            try {
+              final result = await Future.wait([
+                _resolveReference(data['customer_id']),
+                _resolveReference(data['address_id']),
+                _resolveReference(data['rider_pickup_id']),
+                _resolveReference(data['staff_id']),
+                _resolveReference(data['rider_delivery_id']),
+              ]);
+              if (!mounted) return;
+              setState(() {
+                _order = data;
+                _customer = result[0];
+                _address = result[1];
+                _riderPickup = result[2];
+                _staff = result[3];
+                _riderDelivery = result[4];
+                _loading = false;
+                _error = null;
+              });
+            } catch (e) {
+              log('resolve order references error: $e');
+              if (!mounted) return;
               setState(() {
                 _order = data;
                 _loading = false;
               });
+            }
           },
           onError: (e) {
-            if (mounted)
-              setState(() {
-                _error = 'เกิดข้อผิดพลาด: $e';
-                _loading = false;
-              });
+            log('listen order error: $e');
+            if (!mounted) return;
+            setState(() {
+              _error = 'เกิดข้อผิดพลาดในการโหลดข้อมูล';
+              _loading = false;
+            });
           },
         );
   }
 
   String _fmt(dynamic raw) {
     DateTime? dt;
-    if (raw is Timestamp) dt = raw.toDate();
-    if (raw is String) dt = DateTime.tryParse(raw);
-    if (dt == null) return '-';
+    if (raw is Timestamp) {
+      dt = raw.toDate();
+    }
+    if (raw is String) {
+      dt = DateTime.tryParse(raw);
+    }
+    if (dt == null) {
+      return '-';
+    }
     return DateFormat('d MMM yyyy  เวลา HH:mm น.', 'th').format(dt);
   }
 
-  String _statusLabel(String s) =>
-    {
-  'pending_confirmation': 'รอยืนยันคำสั่งซื้อ',
-      'waiting_payment': 'รอชำระเงิน',
-      'payment_completed': 'ชำระเงินแล้ว',
-      'waiting_pickup': 'รอรับผ้า',
-      'pickup_in_progress': 'กำลังไปรับผ้า',
-      'pickup_completed': 'รับผ้าเรียบร้อยกำลังไปที่ร้าน',
-      'arrived_at_shop': 'มาถึงร้านแล้ว',
-      'waiting_wash': 'รอซัก',
-      'washing': 'กำลังซักผ้า',
-      'waiting_dry': 'รออบผ้า',
-      'drying': 'กำลังอบผ้า',
-      'waiting_delivery': 'รอส่งผ้า',
-      'delivery_heading_to_shop': 'กำลังไปรับผ้าที่ร้าน',
-      'delivery_pickup_completed': 'รับผ้าที่ร้านแล้ว',
-      'delivery_in_progress': 'กำลังจัดส่ง',
-      'completed': 'เสร็จสิ้น',
-      'cancelled': 'ยกเลิก',
-    }[s] ??
-    s;
+  String _shortOrderId(String orderId) {
+    final id = orderId.toUpperCase();
+    if (id.length <= 8) {
+      return id;
+    }
+    return id.substring(0, 8);
+  }
 
-IconData _statusIcon(String s) =>
-    {
-      'pending_confirmation': Icons.hourglass_empty_rounded,
-      'waiting_payment': Icons.payment_rounded,
-      'payment_completed': Icons.check_circle_rounded,
-      'waiting_pickup': Icons.access_time_rounded,
-      'pickup_in_progress': Icons.two_wheeler_rounded,
-      'pickup_completed': Icons.task_alt_rounded,
-      'arrived_at_shop': Icons.store_rounded,
-      'waiting_wash': Icons.hourglass_top_rounded,
-      'washing': Icons.local_laundry_service_rounded,
-      'waiting_dry': Icons.hourglass_bottom_rounded,
-      'drying': Icons.dry_cleaning_rounded,
-      'waiting_delivery': Icons.inventory_2_rounded,
-      'delivery_heading_to_shop': Icons.store_rounded,
-      'delivery_pickup_completed': Icons.checkroom_rounded,
-      'delivery_in_progress': Icons.two_wheeler_rounded,
-      'completed': Icons.check_circle_rounded,
-      'cancelled': Icons.cancel_rounded,
-    }[s] ??
-    Icons.circle;
+  String _statusLabel(String status) {
+    return {
+          'pending_confirmation': 'รอยืนยันคำสั่งซื้อ',
+          'waiting_payment': 'รอชำระเงิน',
+          'payment_completed': 'ชำระเงินแล้ว',
+          'waiting_pickup': 'รอรับผ้า',
+          'pickup_in_progress': 'กำลังไปรับผ้า',
+          'pickup_completed': 'รับผ้าเรียบร้อยกำลังไปที่ร้าน',
+          'arrived_at_shop': 'มาถึงร้านแล้ว',
+          'waiting_wash': 'รอซัก',
+          'washing': 'กำลังซักผ้า',
+          'waiting_dry': 'รออบผ้า',
+          'drying': 'กำลังอบผ้า',
+          'waiting_delivery': 'รอส่งผ้า',
+          'delivery_heading_to_shop': 'กำลังไปรับผ้าที่ร้าน',
+          'delivery_pickup_completed': 'รับผ้าที่ร้านแล้ว',
+          'delivery_in_progress': 'กำลังจัดส่ง',
+          'completed': 'เสร็จสิ้น',
+          'cancelled': 'ยกเลิก',
+        }[status] ??
+        status;
+  }
 
-Color _statusColor(String s) { if (s == 'cancelled') return Colors.red; if (s == 'completed') return Colors.green; return const Color(0xFF29ABE2); }
+  IconData _statusIcon(String status) {
+    return {
+          'pending_confirmation': Icons.hourglass_empty_rounded,
+          'waiting_payment': Icons.payment_rounded,
+          'payment_completed': Icons.check_circle_rounded,
+          'waiting_pickup': Icons.access_time_rounded,
+          'pickup_in_progress': Icons.two_wheeler_rounded,
+          'pickup_completed': Icons.task_alt_rounded,
+          'arrived_at_shop': Icons.store_rounded,
+          'waiting_wash': Icons.hourglass_top_rounded,
+          'washing': Icons.local_laundry_service_rounded,
+          'waiting_dry': Icons.hourglass_bottom_rounded,
+          'drying': Icons.dry_cleaning_rounded,
+          'waiting_delivery': Icons.inventory_2_rounded,
+          'delivery_heading_to_shop': Icons.store_rounded,
+          'delivery_pickup_completed': Icons.checkroom_rounded,
+          'delivery_in_progress': Icons.two_wheeler_rounded,
+          'completed': Icons.check_circle_rounded,
+          'cancelled': Icons.cancel_rounded,
+        }[status] ??
+        Icons.circle;
+  }
 
-Widget _buildStatusTimeline(String currentStatus) {
-  final isCancelled = currentStatus == 'cancelled';
+  Color _statusMainColor(String status) {
+    if (status == 'cancelled') {
+      return Colors.red;
+    }
+    if (status == 'completed') {
+      return Colors.green;
+    }
+    return const Color(0xFF29ABE2);
+  }
 
-  
-  final steps = isCancelled
-      ? ['cancelled']
-      : [
-          'pending_confirmation',
-          'waiting_pickup',
-          'pickup_in_progress',
-          'pickup_completed',
-          'waiting_wash',
-          'washing',
-          'waiting_dry',
-          'drying',
-          'waiting_delivery',
-          'delivery_heading_to_shop',
-          'delivery_pickup_completed',
-          'delivery_in_progress',
-          'completed',
-        ];
-
-  final currentIndex = steps.indexOf(currentStatus);
-  final total = steps.length;
-  // FIX: กันเคส currentIndex == -1 (สถานะที่ไม่รู้จัก/ไม่อยู่ใน list) ไม่ให้ progress
-  // ติดลบ และ clamp ค่าให้อยู่ในช่วง 0.0-1.0 เสมอ เพื่อไม่ให้เส้น progress หายไป
-  final progress = total <= 1
-      ? 1.0
-      : currentIndex < 0
-          ? 0.0
-          : (currentIndex / (total - 1)).clamp(0.0, 1.0);
-
-  final Color mainColor = isCancelled
-      ? Colors.red
-      : currentStatus == 'completed'
-          ? Colors.green
-          : const Color(0xFF29ABE2);
-
-  return Container(
-    width: double.infinity,
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.05),
-          blurRadius: 8,
-          offset: const Offset(0, 2),
-        ),
-      ],
-    ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: mainColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(Icons.timeline_rounded, size: 15, color: mainColor),
-            ),
-            const SizedBox(width: 8),
-            const Text(
-              'สถานะออเดอร์',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 15,
-                color: Color(0xFF1A1A2E),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: progress,
-            minHeight: 5,
-            backgroundColor: const Color(0xFFE2E8F0),
-            valueColor: AlwaysStoppedAnimation<Color>(mainColor),
+  Widget _buildStatusCard(String status) {
+    final mainColor = _statusMainColor(status);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
-        ),
-        const SizedBox(height: 16),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-          decoration: BoxDecoration(
-            color: mainColor.withOpacity(0.06),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: mainColor.withOpacity(0.2)),
-          ),
-          child: Row(
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
               Container(
-                width: 44,
-                height: 44,
+                padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(
-                  color: mainColor.withOpacity(0.12),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: mainColor, width: 2),
+                  color: mainColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Icon(
-                  _statusIcon(currentStatus),
-                  size: 20,
-                  color: mainColor,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'สถานะปัจจุบัน',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: mainColor.withOpacity(0.7),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _statusLabel(currentStatus),
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: mainColor,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
+                child: Icon(Icons.timeline_rounded, size: 15, color: mainColor),
               ),
               const SizedBox(width: 8),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: mainColor,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Text(
-                  'ตอนนี้',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
+              const Text(
+                'สถานะออเดอร์',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                  color: Color(0xFF1A1A2E),
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: mainColor.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: mainColor.withOpacity(0.2)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: mainColor.withOpacity(0.12),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: mainColor, width: 2),
+                  ),
+                  child: Icon(_statusIcon(status), size: 20, color: mainColor),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'สถานะปัจจุบัน',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: mainColor.withOpacity(0.7),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _statusLabel(status),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: mainColor,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: mainColor,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'ตอนนี้',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSnackbar({
+    required String title,
+    required String message,
+    required Color color,
+    required IconData icon,
+  }) {
+    Get.snackbar(
+      title,
+      message,
+      snackPosition: SnackPosition.TOP,
+      backgroundColor: color,
+      colorText: Colors.white,
+      margin: const EdgeInsets.all(12),
+      borderRadius: 12,
+      duration: const Duration(seconds: 3),
+      icon: Icon(icon, color: Colors.white),
+    );
+  }
+
+  Future<void> _confirmCancel() async {
+    if (_cancelling) {
+      return;
+    }
+    final confirm = await Get.dialog<bool>(
+      AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          'ยืนยันการยกเลิก',
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
-      ],
-    ),
-  );
-}
+        content: const Text(
+          'คุณต้องการยกเลิกออเดอร์นี้หรือไม่?\n\n'
+          'สามารถยกเลิกได้เมื่อร้านค้ายังไม่ยืนยันออเดอร์เกิน 5 นาที',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(result: false),
+            child: const Text('ไม่', style: TextStyle(color: Colors.black54)),
+          ),
+          TextButton(
+            onPressed: () => Get.back(result: true),
+            child: const Text(
+              'ยืนยันยกเลิก',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      await _cancelOrder();
+    }
+  }
+
+  Future<void> _cancelOrder() async {
+    if (_cancelling) {
+      return;
+    }
+    final customerRef = _order?['customer_id'];
+    if (customerRef is! DocumentReference) {
+      _showSnackbar(
+        title: 'ไม่สามารถยกเลิกได้',
+        message: 'ไม่พบข้อมูลลูกค้า',
+        color: Colors.red,
+        icon: Icons.error_rounded,
+      );
+      return;
+    }
+    setState(() {
+      _cancelling = true;
+    });
+    try {
+      final config = await Configuration.getConfig();
+      final baseUrl = config['apiEndpoint']?.toString() ?? '';
+      if (baseUrl.isEmpty) {
+        throw Exception('ไม่พบ API endpoint');
+      }
+      final uri = Uri.parse('$baseUrl/order/cancel/${widget.orderId}');
+      final res = await http.put(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'customerId': customerRef.id}),
+      );
+      Map<String, dynamic> body = {};
+      try {
+        final decoded = jsonDecode(res.body);
+        if (decoded is Map<String, dynamic>) {
+          body = decoded;
+        }
+      } catch (_) {}
+      if (!mounted) return;
+      final message = body['message']?.toString();
+      if (res.statusCode == 200 && body['ok'] == true) {
+        setState(() {
+          _order?['status'] = 'cancelled';
+        });
+        _showSnackbar(
+          title: 'ยกเลิกออเดอร์สำเร็จ',
+          message: message ?? 'ยกเลิกออเดอร์สำเร็จ',
+          color: const Color(0xFF22C55E),
+          icon: Icons.check_circle_rounded,
+        );
+         await Future.delayed(const Duration(seconds: 1));
+  if (mounted) {
+    Get.offAll(() => const MainShellCustomer(initialIndex: 1));
+  }
+      } else {
+        _showSnackbar(
+          title: 'ยังไม่สามารถยกเลิกได้',
+          message: message ?? 'ไม่สามารถยกเลิกออเดอร์ได้',
+          color: const Color(0xFFF59E0B),
+          icon: Icons.info_rounded,
+        );
+      }
+    } catch (e) {
+      log('cancel order error: $e');
+      if (!mounted) return;
+      _showSnackbar(
+        title: 'เกิดข้อผิดพลาด',
+        message: 'เกิดข้อผิดพลาดในการยกเลิกออเดอร์',
+        color: const Color(0xFFEF4444),
+        icon: Icons.error_rounded,
+      );
+      
+    } finally {
+      if (mounted) {
+        setState(() {
+          _cancelling = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -310,9 +459,9 @@ Widget _buildStatusTimeline(String currentStatus) {
         flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [Color(0xFF0593FF), Color(0xFF0476D9)],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
+              colors: [Color(0xFF0593FF), Color(0xFF0476D9)],
             ),
           ),
         ),
@@ -329,7 +478,7 @@ Widget _buildStatusTimeline(String currentStatus) {
         ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios),
-          onPressed: () => Get.back(),
+          onPressed: Get.back,
         ),
       ),
       body: _loading
@@ -337,53 +486,50 @@ Widget _buildStatusTimeline(String currentStatus) {
               child: CircularProgressIndicator(color: Color(0xFF29ABE2)),
             )
           : _error != null
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.error_outline,
-                          color: Colors.red, size: 48),
-                      const SizedBox(height: 12),
-                      Text(_error!,
-                          style: const TextStyle(color: Colors.red)),
-                      const SizedBox(height: 12),
-                      ElevatedButton(
-                        onPressed: _listenOrder,
-                        child: const Text('ลองใหม่'),
-                      ),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.error_outline, color: Colors.red, size: 48),
+                  const SizedBox(height: 12),
+                  Text(_error!, style: const TextStyle(color: Colors.red)),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: _listenOrder,
+                    child: const Text('ลองใหม่'),
                   ),
-                )
-              : _order == null
-                  ? const Center(child: Text('ไม่พบข้อมูลออเดอร์'))
-                  : _buildBody(),
+                ],
+              ),
+            )
+          : _order == null
+          ? const Center(child: Text('ไม่พบข้อมูลออเดอร์'))
+          : _buildBody(),
     );
   }
 
   Widget _buildBody() {
     final o = _order!;
-    final orderId = o['order_id'] as String? ?? widget.orderId;
-    final price = (o['service_price'] ?? 0).toDouble();
-    final delivery = (o['delivery_price'] ?? 0).toDouble();
-    final status = o['status'] as String? ?? '';
-    final detergentPrice = (_store?['detergent_price'] ?? 0).toDouble();
-
-    final serviceMap = {
+    final orderId = o['order_id']?.toString() ?? widget.orderId;
+    final status = o['status']?.toString() ?? '';
+    final price = (o['service_price'] as num?)?.toDouble() ?? 0;
+    final delivery = (o['delivery_price'] as num?)?.toDouble() ?? 0;
+    final detergentPrice = (o['detergent_price'] as num?)?.toDouble() ?? 0;
+    final detergentOption = o['detergent_option']?.toString();
+    final totalPrice = price + delivery + detergentPrice;
+    const serviceMap = {
       'wash_dry': 'ซักและอบ',
       'wash': 'ซักอย่างเดียว',
       'dry': 'อบอย่างเดียว',
     };
-    final detergentMap = {
-      'no_detergent': 'ไม่ใช้น้ำยาซัก',
-      'detergent': 'ใช้น้ำยาซักผ้าของร้าน',
+    const detergentMap = {
+      'no_detergent': 'ใช้น้ำยาซักผ้าของร้าน',
+      'detergent': 'ใช้น้ำยาซักผ้าของตัวเอง',
     };
-
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Header Card ──
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
@@ -411,7 +557,7 @@ Widget _buildStatusTimeline(String currentStatus) {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '#${orderId.toUpperCase().substring(0, orderId.length.clamp(0, 8))}',
+                  '#${_shortOrderId(orderId)}',
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -445,32 +591,37 @@ Widget _buildStatusTimeline(String currentStatus) {
             ),
           ),
           const SizedBox(height: 12),
-
-          if (status.isNotEmpty) _buildStatusTimeline(status),
+          if (status.isNotEmpty) _buildStatusCard(status),
           if (status.isNotEmpty) const SizedBox(height: 12),
-          if (_customer != null || _address != null)
+          if (_customer != null || _address != null) ...[
             _card(
               Icons.person_rounded,
               'ข้อมูลลูกค้า',
               Column(
                 children: [
                   if (_customer != null) ...[
-                    _row('ชื่อ', _customer!['fullname'] ?? '-'),
-                    _row('เบอร์โทร', _customer!['phone'] ?? '-'),
+                    _row('ชื่อ', _customer!['fullname']?.toString() ?? '-'),
+                    _row('เบอร์โทร', _customer!['phone']?.toString() ?? '-'),
                   ],
                   if (_address != null)
-                    _row('ที่อยู่', _address!['address_text'] ?? '-'),
+                    _row(
+                      'ที่อยู่',
+                      _address!['address_text']?.toString() ?? '-',
+                    ),
                 ],
               ),
             ),
-          const SizedBox(height: 12),
-
+            const SizedBox(height: 12),
+          ],
           _card(
             Icons.local_laundry_service_rounded,
             'รายละเอียดบริการ',
             Column(
               children: [
-                _row('รูปแบบบริการ', serviceMap[o['service_type']] ?? '-'),
+                _row(
+                  'รูปแบบบริการ',
+                  serviceMap[o['service_type']?.toString()] ?? '-',
+                ),
                 _row(
                   'น้ำหนักผ้า',
                   o['wash_dry_weight'] != null
@@ -478,19 +629,17 @@ Widget _buildStatusTimeline(String currentStatus) {
                       : '-',
                   valueColor: const Color(0xFF29ABE2),
                 ),
-                if (o['detergent_option'] != null)
+                if (detergentOption != null)
                   _row(
                     'น้ำยาซัก',
-                    detergentMap[o['detergent_option']] ??
-                        o['detergent_option'],
+                    detergentMap[detergentOption] ?? detergentOption,
                   ),
                 if ((o['note'] as String?)?.isNotEmpty == true)
-                  _row('หมายเหตุ', o['note']),
+                  _row('หมายเหตุ', o['note'].toString()),
               ],
             ),
           ),
           const SizedBox(height: 12),
-
           _card(
             Icons.receipt_long_rounded,
             'รายละเอียดราคา',
@@ -498,7 +647,10 @@ Widget _buildStatusTimeline(String currentStatus) {
               children: [
                 _row('ค่าซัก', '${price.toInt()} ฿'),
                 _row('ค่าจัดส่ง', '${delivery.toInt()} ฿'),
-                _row('ค่าน้ำยาซัก', '${(detergentPrice.toInt())} ฿'),
+                if (detergentOption == 'no_detergent')
+                  _row('ค่าน้ำยาซัก', '${detergentPrice.toInt()} ฿')
+                else
+                  _row('น้ำยาซัก', 'ใช้น้ำยาซักตัวเอง'),
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 8),
                   child: Divider(height: 1, color: Color(0xFFE2E8F0)),
@@ -514,7 +666,7 @@ Widget _buildStatusTimeline(String currentStatus) {
                       ),
                     ),
                     Text(
-                      '${price + delivery + detergentPrice} ฿',
+                      '${totalPrice.toInt()} ฿',
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 18,
@@ -526,10 +678,10 @@ Widget _buildStatusTimeline(String currentStatus) {
               ],
             ),
           ),
-          const SizedBox(height: 12),
-
-
-          if (_riderPickup != null || _staff != null || _riderDelivery != null)
+          if (_riderPickup != null ||
+              _staff != null ||
+              _riderDelivery != null) ...[
+            const SizedBox(height: 12),
             _card(
               Icons.people_rounded,
               'ผู้รับผิดชอบ',
@@ -538,7 +690,6 @@ Widget _buildStatusTimeline(String currentStatus) {
                   if (_riderPickup != null)
                     _person(
                       Icons.directions_bike_rounded,
-
                       'ไรเดอร์รับผ้า',
                       _riderPickup!,
                     ),
@@ -552,7 +703,8 @@ Widget _buildStatusTimeline(String currentStatus) {
                     ),
                   ],
                   if (_riderDelivery != null) ...[
-                    const Divider(height: 20, color: Color(0xFFE2E8F0)),
+                    if (_riderPickup != null || _staff != null)
+                      const Divider(height: 20, color: Color(0xFFE2E8F0)),
                     _person(
                       Icons.delivery_dining_rounded,
                       'ไรเดอร์ส่งผ้า',
@@ -562,9 +714,8 @@ Widget _buildStatusTimeline(String currentStatus) {
                 ],
               ),
             ),
+          ],
           const SizedBox(height: 12),
-
-          // ── รูปภาพ ──
           _card(
             Icons.photo_library_rounded,
             'รูปภาพจากร้านค้า',
@@ -576,194 +727,241 @@ Widget _buildStatusTimeline(String currentStatus) {
               ],
             ),
           ),
-
+          if (status == 'pending_confirmation') ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.red,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                onPressed: _cancelling ? null : _confirmCancel,
+                icon: _cancelling
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.red,
+                        ),
+                      )
+                    : const Icon(Icons.cancel_outlined, size: 17),
+                label: Text(
+                  _cancelling ? 'กำลังยกเลิก...' : 'ยกเลิกออเดอร์',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 24),
         ],
       ),
     );
   }
 
-  Widget _card(IconData icon, String title, Widget child) => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(7),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF29ABE2).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child:
-                      Icon(icon, size: 16, color: const Color(0xFF29ABE2)),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                      color: Color(0xFF1A1A2E),
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            const Divider(height: 1, color: Color(0xFFE2E8F0)),
-            const SizedBox(height: 14),
-            child,
-          ],
-        ),
-      );
-
-  Widget _row(String label, String value, {Color? valueColor}) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 5),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: const TextStyle(fontSize: 14, color: Colors.black54),
-            ),
-            const SizedBox(width: 16),
-            Flexible(
-              child: Text(
-                value,
-                textAlign: TextAlign.end,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: valueColor ?? Colors.black87,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-
-  Widget _person(
-    IconData icon,
-    String role,
-    Map<String, dynamic> data,
-  ) =>
-      Row(
+  Widget _card(IconData icon, String title, Widget child) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          CircleAvatar(
-            radius: 24,
-            backgroundColor: const Color(0xFFE3F4FC),
-            backgroundImage: data['profile_image'] != null
-                ? NetworkImage(data['profile_image'])
-                : null,
-            child: data['profile_image'] == null
-                ? Icon(icon, color: const Color(0xFF29ABE2), size: 22)
-                : null,
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  role,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: Color(0xFF29ABE2),
-                    fontWeight: FontWeight.w600,
-                  ),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF29ABE2).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                Text(
-                  data['fullname'] ?? '-',
+                child: Icon(icon, size: 16, color: const Color(0xFF29ABE2)),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
                   style: const TextStyle(
                     fontWeight: FontWeight.bold,
-                    fontSize: 14,
+                    fontSize: 15,
                     color: Color(0xFF1A1A2E),
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 3),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    _infoChip(
-                      Icons.phone_rounded,
-                      data['phone'] ?? '-',
-                    ),
-                    if (data['license_plate'] != null)
-                      _infoChip(
-                        Icons.confirmation_number_outlined,
-                        "ทะเบียนรถ ${data['license_plate']}",
-                      ),
-                    if (data['vehicle_type'] != null)
-                      _infoChip(
-                        Icons.directions_car_rounded,
-                        data['vehicle_type'],
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      );
-
-  Widget _infoChip(IconData icon, String text) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: Colors.grey.shade400),
-          const SizedBox(width: 4),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 140),
-            child: Text(
-              text,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey.shade500,
               ),
-              overflow: TextOverflow.ellipsis,
-              maxLines: 1,
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Divider(height: 1, color: Color(0xFFE2E8F0)),
+          const SizedBox(height: 14),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _row(String label, String value, {Color? valueColor}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontSize: 14, color: Colors.black54),
+          ),
+          const SizedBox(width: 16),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: valueColor ?? Colors.black87,
+              ),
             ),
           ),
         ],
-      );
+      ),
+    );
+  }
+
+  String _vehicleText(String value) {
+
+    const vehicleMap = {
+      'motorcycle': 'มอเตอร์ไซค์',
+      'car': 'รถยนต์',
+    };
+
+    final normalized = value.trim().toLowerCase();
+    return vehicleMap[normalized] ?? value;
+  }
+
+  Widget _person(IconData icon, String role, Map<String, dynamic> data) {
+    final profileImage = data['profile_image']?.toString();
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        CircleAvatar(
+          radius: 24,
+          backgroundColor: const Color(0xFFE3F4FC),
+          backgroundImage: profileImage != null && profileImage.isNotEmpty
+              ? NetworkImage(profileImage)
+              : null,
+          child: profileImage == null || profileImage.isEmpty
+              ? Icon(icon, color: const Color(0xFF29ABE2), size: 22)
+              : null,
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                role,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: Color(0xFF29ABE2),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                data['fullname']?.toString() ?? '-',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  color: Color(0xFF1A1A2E),
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 3),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _infoChip(
+                    Icons.phone_rounded,
+                    data['phone']?.toString() ?? '-',
+                  ),
+                  if (data['license_plate'] != null)
+                    _infoChip(
+                      Icons.confirmation_number_outlined,
+                      'ทะเบียนรถ ${data['license_plate']}',
+                    ),
+                  if (data['vehicle_type'] != null)
+                    _infoChip(
+                      Icons.directions_car_rounded,
+                      _vehicleText(data['vehicle_type'].toString()),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _infoChip(IconData icon, String text) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: Colors.grey.shade400),
+        const SizedBox(width: 4),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 140),
+          child: Text(
+            text,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _imgBox(String? url, String label) {
-    final has = url != null && url.isNotEmpty;
+    final hasImage = url != null && url.isNotEmpty;
     return Expanded(
       child: Column(
         children: [
           GestureDetector(
-            onTap: has
-                ? () => showDialog(
+            onTap: hasImage
+                ? () {
+                    showDialog(
                       context: context,
                       builder: (_) => Dialog(
                         backgroundColor: Colors.transparent,
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(12),
-                          child: Image.network(url!, fit: BoxFit.contain),
+                          child: Image.network(url, fit: BoxFit.contain),
                         ),
                       ),
-                    )
+                    );
+                  }
                 : null,
             child: AspectRatio(
               aspectRatio: 1,
@@ -772,14 +970,14 @@ Widget _buildStatusTimeline(String currentStatus) {
                   color: const Color(0xFFF1F5F9),
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: const Color(0xFFE2E8F0)),
-                  image: has
+                  image: hasImage
                       ? DecorationImage(
-                          image: NetworkImage(url!),
+                          image: NetworkImage(url),
                           fit: BoxFit.cover,
                         )
                       : null,
                 ),
-                child: has
+                child: hasImage
                     ? Align(
                         alignment: Alignment.bottomRight,
                         child: Container(
@@ -799,13 +997,18 @@ Widget _buildStatusTimeline(String currentStatus) {
                     : Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.camera_alt_outlined,
-                              color: Colors.grey.shade400, size: 30),
+                          Icon(
+                            Icons.camera_alt_outlined,
+                            color: Colors.grey.shade400,
+                            size: 30,
+                          ),
                           const SizedBox(height: 4),
                           Text(
                             'ยังไม่มีรูป',
                             style: TextStyle(
-                                fontSize: 11, color: Colors.grey.shade400),
+                              fontSize: 11,
+                              color: Colors.grey.shade400,
+                            ),
                           ),
                         ],
                       ),

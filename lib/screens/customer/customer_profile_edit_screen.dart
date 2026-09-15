@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:get/get.dart';
@@ -257,18 +258,187 @@ class _ProfileEditCustomerState extends State<ProfileEditCustomer> {
   }
 
   Future<void> _selectDate() async {
-    final DateTime? picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedBirthday ?? DateTime(2000),
-      firstDate: DateTime(1900),
-      lastDate: DateTime.now(),
-    );
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final minimumDate = DateTime(1900, 1, 1);
 
-    if (picked != null) {
-      setState(() {
-        _selectedBirthday = picked;
-      });
+    DateTime initialDate = _selectedBirthday ?? DateTime(2000, 1, 1);
+
+    if (initialDate.isBefore(minimumDate)) {
+      initialDate = minimumDate;
     }
+
+    if (initialDate.isAfter(today)) {
+      initialDate = today;
+    }
+
+    DateTime tempDate = initialDate;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(28),
+            ),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 42,
+                    height: 5,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE2E8F0),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: _primary.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(13),
+                        ),
+                        child: const Icon(
+                          Icons.cake_rounded,
+                          color: _primary,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'เลือกวันเกิด',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: _textMain,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'เลื่อนเพื่อเลือกวัน เดือน และปี',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: _textSub,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    height: 230,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: _border),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: CupertinoTheme(
+                        data: const CupertinoThemeData(
+                          textTheme: CupertinoTextThemeData(
+                            dateTimePickerTextStyle: TextStyle(
+                              fontSize: 20,
+                              color: _textMain,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                        child: CupertinoDatePicker(
+                          mode: CupertinoDatePickerMode.date,
+                          dateOrder: DatePickerDateOrder.dmy,
+                          initialDateTime: initialDate,
+                          minimumDate: minimumDate,
+                          maximumDate: today,
+                          onDateTimeChanged: (value) {
+                            tempDate = DateTime(
+                              value.year,
+                              value.month,
+                              value.day,
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(sheetContext),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _textSub,
+                            side: const BorderSide(color: _border),
+                            minimumSize: const Size.fromHeight(50),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            'ยกเลิก',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            setState(() {
+                              _selectedBirthday = tempDate;
+                            });
+                            Navigator.pop(sheetContext);
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _primary,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            minimumSize: const Size.fromHeight(50),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: const Text(
+                            'ตกลง',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _saveProfile() async {

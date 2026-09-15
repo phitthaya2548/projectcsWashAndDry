@@ -3,16 +3,20 @@ import 'dart:convert';
 import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:get/get_core/src/get_main.dart';
-import 'package:get/get_navigation/src/extension_navigation.dart';
-import 'package:get/get_navigation/src/snackbar/snackbar.dart';
+import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import 'package:wash_and_dry/config/config.dart';
 import 'package:wash_and_dry/models/res/customer/res_applied_store.dart';
 import 'package:wash_and_dry/models/res/customer/store/res_list_register_employee_store.dart';
 import 'package:wash_and_dry/screens/login_screen.dart';
 import 'package:wash_and_dry/screens/register_employee_detail_store.dart';
+import 'package:wash_and_dry/screens/rider/rider_edit_profile_screen.dart';
+import 'package:wash_and_dry/screens/staff/staff_edit_profile_screen.dart';
 import 'package:wash_and_dry/service/session_service.dart';
+import 'package:wash_and_dry/widgets/main_shell_rider.dart';
+import 'package:wash_and_dry/widgets/main_shell_staff.dart';
+
+enum StoreSortOption { distance, rating }
 
 class RegiserEmployeeStore extends StatefulWidget {
   const RegiserEmployeeStore({super.key});
@@ -23,7 +27,6 @@ class RegiserEmployeeStore extends StatefulWidget {
 
 class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
     with SingleTickerProviderStateMixin {
-
   static const _primary = Color(0xFF0593FF);
   static const _primaryDark = Color(0xFF0476D9);
   static const _bg = Color(0xFFF5F7FA);
@@ -32,31 +35,30 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
   static const _warning = Color(0xFFF59E0B);
   static const _cardRadius = 20.0;
 
+  late final TabController _tabController;
+  int _lastTabIndex = 0;
+
   String _apiUrl = '';
+  String? _userId ='';
+  String? _role;
+
   bool _loading = true;
-  bool _locating = false;
   String? _error;
   List<StoreListItem> _stores = [];
+  StoreSortOption _sortOption = StoreSortOption.distance;
 
+  bool _locating = false;
   Position? _userPosition;
   String? _locationError;
 
-  late TabController _tabController;
-
-  // เก็บ index แท็บก่อนหน้า เพื่อเช็คว่าเพิ่งสลับ "เข้ามา" ที่แท็บนี้จริง ๆ
-  int _lastTabIndex = 0;
+  String? imageUrl;
 
   bool _loadingApplied = true;
   String? _appliedError;
   AppliedStoreData? _appliedStore;
-  String? _userId;
-  String? _role;
-
-  // สถานะตอนกำลังยกเลิกการสมัครร้าน
   bool _unapplying = false;
 
-  // ค้นหาร้านค้า (ยิงไป backend ผ่าน query param ?search=)
-  final TextEditingController _searchController = TextEditingController();
+  final _searchController = TextEditingController();
   String _searchQuery = '';
   bool _searchLoading = false;
   Timer? _searchDebounce;
@@ -64,25 +66,25 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
-
-    // แก้ปัญหาร้านที่พึ่งสมัครไปไม่โชว์ เพราะเดิมดึงแค่ครั้งเดียวตอนเปิดหน้า
-    _tabController.addListener(() {
-      if (_tabController.index == 1 && _lastTabIndex != 1) {
-        _fetchAppliedStore();
-      }
-      _lastTabIndex = _tabController.index;
-    });
-
+    _tabController = TabController(length: 2, vsync: this)
+      ..addListener(_onTabChanged);
     _loadData();
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     _searchController.dispose();
     _searchDebounce?.cancel();
     super.dispose();
+  }
+
+  void _onTabChanged() {
+    if (_tabController.index == 1 && _lastTabIndex != 1) {
+      _fetchAppliedStore();
+    }
+    _lastTabIndex = _tabController.index;
   }
 
   Future<void> _loadData() async {
@@ -90,27 +92,24 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
       _loading = true;
       _error = null;
     });
+
     try {
       final cfg = await Configuration.getConfig();
       _apiUrl = cfg['apiEndpoint']?.toString() ?? '';
 
-      final ss = Session();
-      _role = await ss.getRole(); // 'rider' หรือ 'laundry_staff'
+      final session = Session();
+      imageUrl = await session.getProfileImage() ;
 
-      if (_role == 'rider') {
-        _userId = await ss.getRiderId();
-      } else if (_role == 'laundry_staff') {
-        _userId = await ss.getStaffId();
-      }
+      _role = await session.getRole();
+      _userId = _role == 'rider'
+          ? await session.getRiderId()
+          : _role == 'laundry_staff'
+          ? await session.getStaffId()
+          : null;
 
-      // ✅ เริ่มค้นหาตำแหน่งพร้อมกับดึงข้อมูลร้าน ไม่ต้องรอให้โหลดร้านเสร็จก่อน
-      // ทำให้ระยะทางโผล่เร็วขึ้น และไม่บล็อกการแสดงผลรายการร้าน
       _startLocating();
 
-      await Future.wait([
-        _fetchStores(),
-        _fetchAppliedStore(),
-      ]);
+      await Future.wait([_fetchStores(), _fetchAppliedStore()]);
 
       if (mounted) setState(() => _loading = false);
     } catch (e) {
@@ -124,45 +123,270 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
     }
   }
 
+  Future<void> _refresh() => _loadData();
+
   void _startLocating() {
-    if (_locating) return;
+    if (_locating || !mounted) return;
     setState(() => _locating = true);
     _getUserLocation().then((_) {
       if (!mounted) return;
       setState(() {
         _locating = false;
-        _sortStoresByDistance();
+        _applySort();
       });
     });
+  }
+
+  Future<void> _getUserLocation() async {
+    try {
+      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        _locationError = 'กรุณาเปิดบริการตำแหน่ง (Location Service)';
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          _locationError = 'ไม่ได้รับอนุญาตให้เข้าถึงตำแหน่ง';
+          return;
+        }
+      }
+      if (permission == LocationPermission.deniedForever) {
+        _locationError = 'กรุณาอนุญาตการเข้าถึงตำแหน่งในตั้งค่าเครื่อง';
+        return;
+      }
+
+      final lastKnown = await Geolocator.getLastKnownPosition();
+      if (lastKnown != null && mounted) {
+        setState(() {
+          _userPosition = lastKnown;
+          _locationError = null;
+          _applySort();
+        });
+      }
+
+      Position? current;
+      try {
+        current = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.medium,
+          timeLimit: const Duration(seconds: 12),
+        );
+      } catch (e) {
+        log('GET CURRENT POSITION ERROR: $e');
+      }
+
+      if (current != null) {
+        _userPosition = current;
+        _locationError = null;
+      } else if (lastKnown == null) {
+        _locationError = 'ไม่สามารถระบุตำแหน่งได้ ลองอีกครั้ง';
+      }
+    } catch (e) {
+      log('LOCATION ERROR: $e');
+      _locationError ??= 'ไม่สามารถระบุตำแหน่งได้';
+    }
+  }
+
+  void _applySort() {
+    switch (_sortOption) {
+      case StoreSortOption.distance:
+        _sortStoresByDistance();
+      case StoreSortOption.rating:
+        _sortStoresByRating();
+    }
+  }
+
+  void _sortStoresByDistance() {
+    if (_userPosition == null || _stores.isEmpty) return;
+    _stores.sort((a, b) {
+      final da = _distanceToStore(a) ?? double.infinity;
+      final db = _distanceToStore(b) ?? double.infinity;
+      return da.compareTo(db);
+    });
+  }
+
+  void _sortStoresByRating() {
+    if (_stores.isEmpty) return;
+    _stores.sort((a, b) {
+      final ratingCompare = b.avgRating.compareTo(a.avgRating);
+      if (ratingCompare != 0) return ratingCompare;
+      return b.totalReviews.compareTo(a.totalReviews);
+    });
+  }
+
+  void _selectSortOption(StoreSortOption option) {
+    if (_sortOption == option) return;
+    setState(() {
+      _sortOption = option;
+      _applySort();
+    });
+  }
+
+  double? _distanceToStore(StoreListItem store) {
+    if (_userPosition == null) return null;
+    if (store.latitude == 0 && store.longitude == 0) return null;
+    return Geolocator.distanceBetween(
+      _userPosition!.latitude,
+      _userPosition!.longitude,
+      store.latitude,
+      store.longitude,
+    );
+  }
+
+  String _formatDistance(double? meters) {
+    if (meters == null) return '-';
+    if (meters < 1000) return '${meters.toStringAsFixed(0)} ม.';
+    return '${(meters / 1000).toStringAsFixed(1)} กม.';
   }
 
   Future<void> _fetchStores({String? search}) async {
     if (_apiUrl.isEmpty) return;
 
     final query = (search ?? _searchQuery).trim();
-    final uri = Uri.parse('$_apiUrl/employee_regis_store/stores/list').replace(
-      queryParameters: query.isNotEmpty ? {'search': query} : null,
-    );
+    final uri = Uri.parse(
+      '$_apiUrl/employee_regis_store/stores/list',
+    ).replace(queryParameters: query.isNotEmpty ? {'search': query} : null);
 
     final res = await http.get(uri).timeout(const Duration(seconds: 10));
-    if (res.statusCode != 200) {
-      throw Exception('HTTP ${res.statusCode}');
-    }
-    final json = jsonDecode(res.body) as Map<String, dynamic>;
-    final parsed = StoreListResponse.fromJson(json);
+    if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+
+    final data = StoreListResponse.fromJson(jsonDecode(res.body));
     if (!mounted) return;
     setState(() {
-      _stores = parsed.data;
-      _sortStoresByDistance();
+      _stores = data.data.where((store) => store.isHiring).toList();
+      _applySort();
     });
   }
 
-  // ค้นหาแบบ debounce กันยิง request รัวทุกครั้งที่พิมพ์
+  String? _appliedStorePath() {
+    if (_apiUrl.isEmpty ||
+        _userId == null ||
+        _userId!.isEmpty ||
+        _role == null) {
+      return null;
+    }
+    final resource = _role == 'rider' ? 'rider' : 'staff';
+    return '$_apiUrl/employee_regis_store/$resource/$_userId/applied/store';
+  }
+
+  Future<void> _fetchAppliedStore() async {
+    final path = _appliedStorePath();
+
+    if (path == null) {
+      if (!mounted) return;
+      setState(() {
+        _loadingApplied = false;
+        _appliedError = 'ไม่พบข้อมูลผู้ใช้';
+        _appliedStore = null;
+      });
+      return;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _loadingApplied = true;
+      _appliedError = null;
+    });
+
+    try {
+      final res = await http
+          .get(Uri.parse(path))
+          .timeout(const Duration(seconds: 10));
+
+      if (res.statusCode != 200) {
+        throw Exception('HTTP ${res.statusCode}');
+      }
+
+      final data = AppliedStoreResponse.fromJson(jsonDecode(res.body));
+      final appliedStore = data.data;
+
+      if (appliedStore != null) {
+        final session = Session();
+        await session.updateStoreId(appliedStore.storeId);
+        await session.updateStatus(appliedStore.status ?? '');
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _appliedStore = appliedStore;
+        _loadingApplied = false;
+      });
+    } catch (e) {
+      log('FETCH APPLIED STORE ERROR: $e');
+
+      if (!mounted) return;
+
+      setState(() {
+        _appliedError = 'โหลดข้อมูลร้านที่สมัครไม่สำเร็จ';
+        _appliedStore = null;
+        _loadingApplied = false;
+      });
+    }
+  }
+
+  Future<void> _unapplyStore() async {
+    final path = _appliedStorePath();
+    if (path == null || _unapplying) return;
+
+    setState(() => _unapplying = true);
+
+    try {
+      final res = await http
+          .put(Uri.parse(path))
+          .timeout(const Duration(seconds: 10));
+
+      final json = jsonDecode(res.body) as Map<String, dynamic>;
+
+      if (res.statusCode != 200 || json['ok'] != true) {
+        throw Exception(
+          json['message']?.toString() ?? 'HTTP ${res.statusCode}',
+        );
+      }
+
+      await Session().clearEmployeeStore();
+
+      if (!mounted) return;
+
+      setState(() {
+        _appliedStore = null;
+        _unapplying = false;
+      });
+
+      _showToast('สำเร็จ', 'ยกเลิกการสมัครร้านแล้ว', isError: false);
+    } catch (e) {
+      log('UNAPPLY STORE ERROR: $e');
+
+      if (!mounted) return;
+
+      setState(() => _unapplying = false);
+
+      _showToast(
+        'ผิดพลาด',
+        'ยกเลิกการสมัครไม่สำเร็จ กรุณาลองใหม่',
+        isError: true,
+      );
+    }
+  }
+
+  Future<void> _logout() async {
+    try {
+      await Session().clear();
+    } catch (e) {
+      log('LOGOUT ERROR: $e');
+    }
+    if (mounted) Get.offAll(() => const LoginScreen());
+  }
+
   void _onSearchChanged(String value) {
     _searchQuery = value;
     setState(() {});
+
     _searchDebounce?.cancel();
     _searchDebounce = Timer(const Duration(milliseconds: 400), () async {
+      if (!mounted) return;
       setState(() => _searchLoading = true);
       try {
         await _fetchStores(search: value);
@@ -177,6 +401,7 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
   void _clearSearch() {
     _searchDebounce?.cancel();
     _searchController.clear();
+    if (!mounted) return;
     setState(() {
       _searchQuery = '';
       _searchLoading = true;
@@ -186,101 +411,42 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
     });
   }
 
-  //  ดึงร้านที่สมัคร
-  Future<void> _fetchAppliedStore() async {
-    if (_apiUrl.isEmpty || _userId == null || _userId!.isEmpty || _role == null) {
-      setState(() {
-        _loadingApplied = false;
-        _appliedError = 'ไม่พบข้อมูลผู้ใช้';
-      });
+  void _goToStoreDetail(String storeId) {
+    Get.to(() => StoreDetailEmployeeScreen(storeId: storeId));
+  }
+
+  void _goToAppliedStoreDetail(AppliedStoreData store) {
+    _goToStoreDetail(store.storeId);
+  }
+
+  bool _isApprovedStatus(String? status) {
+    return status == 'ONLINE' || status == 'TEMP_CLOSED';
+  }
+
+  Color _appliedStatusColor(String? status) {
+    if (_isApprovedStatus(status)) return _success;
+    if (status == 'pending') return _warning;
+    return Colors.grey;
+  }
+
+  void _goToWork() {
+    if (_role == 'rider') {
+      Get.offAll(() => MainShellRider());
       return;
     }
 
-    setState(() {
-      _loadingApplied = true;
-      _appliedError = null;
-    });
-
-    try {
-      final path = _role == 'rider'
-          ? '/employee_regis_store/rider/$_userId/applied/store'
-          : '/employee_regis_store/staff/$_userId/applied/store';
-
-      final uri = Uri.parse('$_apiUrl$path');
-      final res = await http.get(uri).timeout(const Duration(seconds: 10));
-      if (res.statusCode != 200) {
-        throw Exception('HTTP ${res.statusCode}');
-      }
-      final json = jsonDecode(res.body) as Map<String, dynamic>;
-      final parsed = AppliedStoreResponse.fromJson(json);
-      if (!mounted) return;
-      setState(() {
-        _appliedStore = parsed.data;
-        _loadingApplied = false;
-      });
-    } catch (e) {
-      log('FETCH APPLIED STORE ERROR: $e');
-      if (mounted) {
-        setState(() {
-          _appliedError = 'โหลดข้อมูลร้านที่สมัครไม่สำเร็จ';
-          _loadingApplied = false;
-        });
-      }
+    if (_role == 'laundry_staff') {
+      Get.offAll(() => MainShellStaff());
     }
   }
 
-  Future<void> _unapplyStore() async {
-    if (_apiUrl.isEmpty || _userId == null || _userId!.isEmpty || _role == null) {
-      return;
-    }
-
-    setState(() => _unapplying = true);
-
-    try {
-      final path = _role == 'rider'
-          ? '/employee_regis_store/rider/$_userId/applied/store'
-          : '/employee_regis_store/staff/$_userId/applied/store';
-
-      final uri = Uri.parse('$_apiUrl$path');
-      final res = await http.put(uri).timeout(const Duration(seconds: 10));
-
-      final json = jsonDecode(res.body) as Map<String, dynamic>;
-
-      if (res.statusCode != 200 || json['ok'] != true) {
-        throw Exception(json['message']?.toString() ?? 'HTTP ${res.statusCode}');
-      }
-
-      if (!mounted) return;
-      setState(() {
-        _appliedStore = null; // ลบสำเร็จ -> ไม่มีร้านที่สมัครแล้ว
-        _unapplying = false;
-      });
-
-      Get.snackbar(
-        'สำเร็จ',
-        'ยกเลิกการสมัครร้านแล้ว',
-        snackPosition: SnackPosition.BOTTOM,
-        backgroundColor: _success,
-        colorText: Colors.white,
-        margin: const EdgeInsets.all(14),
-        borderRadius: 14,
-        icon: const Icon(Icons.check_circle_rounded, color: Colors.white),
-      );
-    } catch (e) {
-      log('UNAPPLY STORE ERROR: $e');
-      if (!mounted) return;
-      setState(() => _unapplying = false);
-
-      Get.snackbar(
-        'ผิดพลาด',
-        'ยกเลิกการสมัครไม่สำเร็จ กรุณาลองใหม่',
-        snackPosition: SnackPosition.BOTTOM,
-        backgroundColor: _danger,
-        colorText: Colors.white,
-        margin: const EdgeInsets.all(14),
-        borderRadius: 14,
-        icon: const Icon(Icons.error_rounded, color: Colors.white),
-      );
+  void _goToEditProfile() {
+    if (_role == 'rider') {
+      if (_userId == null || _userId!.isEmpty) return;
+      Get.to(() => EditRiderScreen(riderId: _userId!));
+    } else if (_role == 'laundry_staff') {
+      if (_userId == null || _userId!.isEmpty) return;
+      Get.to(() => EditLaundryStaffScreen(staffId: _userId!));
     }
   }
 
@@ -310,7 +476,6 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
     );
   }
 
-  // ✅ รวม dialog ยืนยันที่หน้าตาเหมือนกันไว้ที่เดียว ลดโค้ดซ้ำ
   void _showConfirmDialog({
     required IconData icon,
     required Color iconBg,
@@ -344,7 +509,10 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
               Container(
                 width: 64,
                 height: 64,
-                decoration: BoxDecoration(shape: BoxShape.circle, color: iconBg),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: iconBg,
+                ),
                 child: Icon(icon, color: iconColor, size: 32),
               ),
               const SizedBox(height: 16),
@@ -367,7 +535,7 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: () => Get.back(),
+                      onPressed: Get.back,
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         shape: RoundedRectangleBorder(
@@ -418,142 +586,20 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
     );
   }
 
-  // ✅ แก้บั๊กหลัก: เดิมถ้า getCurrentPosition timeout/error และไม่มีตำแหน่งล่าสุดเลย
-  // จะไม่มีอะไรแสดงผลใด ๆ เลย (ไม่มีข้อความ ไม่มีระยะทาง ไม่มีทางลองใหม่)
-  // ตอนนี้: ใช้ตำแหน่งล่าสุดที่เคยบันทึกไว้ก่อนเพื่อโชว์ระยะทางได้ทันที ระหว่างรอค่าที่แม่นขึ้น
-  // และเก็บ error ไว้แสดงเป็นแบนเนอร์พร้อมปุ่ม "ลองอีกครั้ง"
-  Future<void> _getUserLocation() async {
-    try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        _locationError = 'กรุณาเปิดบริการตำแหน่ง (Location Service)';
-        return;
-      }
-
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          _locationError = 'ไม่ได้รับอนุญาตให้เข้าถึงตำแหน่ง';
-          return;
-        }
-      }
-      if (permission == LocationPermission.deniedForever) {
-        _locationError = 'กรุณาอนุญาตการเข้าถึงตำแหน่งในตั้งค่าเครื่อง';
-        return;
-      }
-
-      // โชว์ระยะทางแบบคร่าว ๆ จากตำแหน่งล่าสุดที่เคยบันทึกไว้ก่อน (เร็ว ไม่ต้องรอ GPS)
-      final lastKnown = await Geolocator.getLastKnownPosition();
-      if (lastKnown != null && mounted) {
-        setState(() {
-          _userPosition = lastKnown;
-          _locationError = null;
-          _sortStoresByDistance();
-        });
-      }
-
-      Position? current;
-      try {
-        current = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.medium,
-          timeLimit: const Duration(seconds: 12),
-        );
-      } catch (e) {
-        log('GET CURRENT POSITION ERROR: $e');
-        current = null;
-      }
-
-      if (current != null) {
-        _userPosition = current;
-        _locationError = null;
-      } else if (lastKnown == null) {
-        _locationError = 'ไม่สามารถระบุตำแหน่งได้ ลองอีกครั้ง';
-      }
-    } catch (e) {
-      log('LOCATION ERROR: $e');
-      if (_userPosition == null) {
-        _locationError = 'ไม่สามารถระบุตำแหน่งได้';
-      }
-    }
-  }
-
-  void _sortStoresByDistance() {
-    if (_userPosition == null || _stores.isEmpty) return;
-    _stores.sort((a, b) {
-      final da = _distanceToStore(a) ?? double.infinity;
-      final db = _distanceToStore(b) ?? double.infinity;
-      return da.compareTo(db);
-    });
-  }
-
-  double? _distanceToStore(StoreListItem store) {
-    if (_userPosition == null) return null;
-    if (store.latitude == 0 && store.longitude == 0) return null;
-    return Geolocator.distanceBetween(
-      _userPosition!.latitude,
-      _userPosition!.longitude,
-      store.latitude,
-      store.longitude,
+  void _showToast(String title, String message, {required bool isError}) {
+    Get.snackbar(
+      title,
+      message,
+      snackPosition: SnackPosition.BOTTOM,
+      backgroundColor: isError ? _danger : _success,
+      colorText: Colors.white,
+      margin: const EdgeInsets.all(14),
+      borderRadius: 14,
+      icon: Icon(
+        isError ? Icons.error_rounded : Icons.check_circle_rounded,
+        color: Colors.white,
+      ),
     );
-  }
-
-  String _formatDistance(double? meters) {
-    if (meters == null) return '-';
-    if (meters < 1000) return '${meters.toStringAsFixed(0)} ม.';
-    return '${(meters / 1000).toStringAsFixed(1)} กม.';
-  }
-
-  Future<void> _refresh() async {
-    await _loadData();
-  }
-
-  Future<void> _logout() async {
-    try {
-      final ss = Session();
-      await ss.clear();
-    } catch (e) {
-      log('Logout error: $e');
-    }
-
-    if (!mounted) return;
-    Get.offAll(() => const LoginScreen());
-  }
-
-  // ✅ ไปหน้า detail: ใช้ StoreListItem ตัวเต็มจาก _stores ถ้ามี (ข้อมูลครบกว่า)
-  // ถ้าร้านนั้นไม่อยู่ใน _stores (เช่นร้านปิดรับสมัครแล้วเลยไม่ติด list) fallback ด้วยข้อมูลเท่าที่มี
-  void _goToAppliedStoreDetail(AppliedStoreData applied) {
-    final existing = _stores.where((s) => s.storeId == applied.storeId);
-
-    if (existing.isNotEmpty) {
-      Get.to(() => StoreDetailEmployeeScreen(store: existing.first));
-      return;
-    }
-
-    final fallbackStore = StoreListItem(
-      storeId: applied.storeId,
-      storeName: applied.storeName,
-      phone: applied.phone,
-      email: '',
-      facebook: '',
-      lineId: '',
-      address: applied.address,
-      latitude: 0,
-      longitude: 0,
-      serviceRadius: 0,
-      openingHours: '',
-      closedHours: '',
-      deliveryMin: 0,
-      deliveryMax: 0,
-      profileImage: applied.profileImage,
-      status: '',
-      isHiring: true,
-      updatedAt: null,
-      totalReviews: 0,
-      avgRating: 0,
-    );
-
-    Get.to(() => StoreDetailEmployeeScreen(store: fallbackStore));
   }
 
   @override
@@ -582,11 +628,61 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
             letterSpacing: -0.2,
           ),
         ),
+        leading: IconButton(
+          icon: const Icon(Icons.logout_rounded, color: Colors.white),
+          tooltip: 'ออกจากระบบ',
+          onPressed: _confirmLogout,
+        ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.logout_rounded, color: Colors.white),
-            tooltip: 'ออกจากระบบ',
-            onPressed: _confirmLogout,
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.15),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: IconButton(
+                padding: EdgeInsets.zero,
+                icon: ClipOval(
+                  child: (imageUrl == null || imageUrl!.isEmpty)
+                      ? Container(
+                          color: Colors.white,
+                          child: const Icon(
+                            Icons.account_circle_rounded,
+                            size: 32,
+                            color: Color(0xFF0EA5E9),
+                          ),
+                        )
+                      : Image.network(
+                          imageUrl!,
+                          width: 34,
+                          height: 34,
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) {
+                            return Container(
+                              color: Colors.white,
+                              child: const Icon(
+                                Icons.account_circle_rounded,
+                                size: 32,
+                                color: Color(0xFF0EA5E9),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+                tooltip: 'โปรไฟล์',
+                onPressed: _goToEditProfile,
+              ),
+            ),
           ),
         ],
         bottom: TabBar(
@@ -596,7 +692,10 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
           indicatorSize: TabBarIndicatorSize.label,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
-          labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          labelStyle: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 14,
+          ),
           tabs: const [
             Tab(text: 'ร้านค้าทั้งหมด'),
             Tab(text: 'ร้านที่สมัคร'),
@@ -609,96 +708,21 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
           RefreshIndicator(
             onRefresh: _refresh,
             color: _primary,
-            child: _buildBody(),
+            child: _buildStoreListTab(),
           ),
           RefreshIndicator(
             onRefresh: _fetchAppliedStore,
             color: _primary,
-            child: _buildAppliedStoreBody(),
+            child: _buildAppliedTab(),
           ),
         ],
       ),
     );
   }
 
-  // ช่องค้นหาร้านค้า อยู่บนสุดของแท็บ "ร้านค้าทั้งหมด"
-  Widget _buildSearchField() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.05),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: TextField(
-          controller: _searchController,
-          onChanged: _onSearchChanged,
-          decoration: InputDecoration(
-            hintText: 'ค้นหาร้านค้า (ชื่อ, ที่อยู่, เบอร์โทร)',
-            hintStyle: TextStyle(fontSize: 13, color: Colors.grey[500]),
-            prefixIcon: const Icon(Icons.search_rounded, size: 20, color: Colors.grey),
-            suffixIcon: _searchLoading
-                ? const Padding(
-                    padding: EdgeInsets.all(14),
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: _primary),
-                    ),
-                  )
-                : (_searchQuery.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.close_rounded, size: 18, color: Colors.grey),
-                        onPressed: _clearSearch,
-                      )
-                    : null),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(14),
-              borderSide: BorderSide.none,
-            ),
-            filled: true,
-            fillColor: Colors.white,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          ),
-          style: const TextStyle(fontSize: 13),
-        ),
-      ),
-    );
-  }
-
-  // ✅ แบนเนอร์แจ้งสถานะการค้นหาตำแหน่ง / ปุ่มลองใหม่เมื่อระบุตำแหน่งไม่สำเร็จ
-  Widget? _buildLocationBanner() {
-    if (_locating && _userPosition == null) {
-      return _InfoBanner(
-        icon: Icons.location_searching_rounded,
-        color: _primary,
-        text: 'กำลังค้นหาตำแหน่งของคุณ เพื่อจัดเรียงร้านที่ใกล้ที่สุด...',
-      );
-    }
-    if (_locationError != null && _userPosition == null) {
-      return _InfoBanner(
-        icon: Icons.location_off_rounded,
-        color: _warning,
-        text: _locationError!,
-        actionLabel: 'ลองอีกครั้ง',
-        onAction: _startLocating,
-      );
-    }
-    return null;
-  }
-
-  Widget _buildBody() {
+  Widget _buildStoreListTab() {
     if (_loading) {
-      return const Center(
-        child: CircularProgressIndicator(color: _primary),
-      );
+      return const Center(child: CircularProgressIndicator(color: _primary));
     }
 
     if (_error != null) {
@@ -722,257 +746,178 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
                 )
               : _buildEmptyState(
                   icon: Icons.store_outlined,
-                  title: 'ยังไม่มีร้านค้าในระบบ',
+                  title: 'ยังไม่มีร้านค้าที่เปิดรับสมัคร',
                 ),
         ],
       );
     }
+
+    final headerCount = 2 + (banner != null ? 1 : 0);
 
     return ListView.builder(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.only(bottom: 20),
-      itemCount: 1 + (banner != null ? 1 : 0) + _stores.length,
-      itemBuilder: (context, i) {
-        if (i == 0) return _buildSearchField();
+      itemCount: headerCount + _stores.length,
+      itemBuilder: (context, index) {
+        if (index == 0) return _buildSearchField();
+        if (index == 1) return _buildSortBar();
 
-        final offset = i - 1;
-        if (banner != null) {
-          if (offset == 0) return banner;
-          return _buildStoreCard(_stores[offset - 1]);
-        }
-        return _buildStoreCard(_stores[offset]);
+        final bannerIndex = 2;
+        if (banner != null && index == bannerIndex) return banner;
+
+        final storeIndex = index - headerCount;
+        return _buildStoreCard(_stores[storeIndex]);
       },
     );
   }
 
-  // Body ของแท็บ "ร้านที่สมัคร"
-  Widget _buildAppliedStoreBody() {
-    if (_loadingApplied) {
-      return const Center(
-        child: CircularProgressIndicator(color: _primary),
-      );
-    }
-
-    if (_appliedError != null) {
-      return ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        children: [_buildErrorState(message: _appliedError!, onRetry: _fetchAppliedStore)],
-      );
-    }
-
-    if (_appliedStore == null) {
-      return ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        children: [
-          _buildEmptyState(
-            icon: Icons.assignment_late_outlined,
-            title: 'คุณยังไม่ได้สมัครร้านค้าใด',
-            subtitle: 'เลื่อนไปแท็บ "ร้านค้าทั้งหมด" เพื่อเลือกสมัคร',
-          ),
-        ],
-      );
-    }
-
-    return ListView(
-      physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.only(top: 12, bottom: 20),
-      children: [
-        _buildAppliedStoreCard(_appliedStore!),
-      ],
-    );
-  }
-
-  // เนื้อหา error state ล้วน ๆ ไม่ scroll เอง — ผู้เรียกต้องห่อด้วย ListView/Scrollable เอง
-  // (ห้าม return ListView ตรงนี้ ไม่งั้นถ้าถูกเอาไปใส่เป็น children ของ ListView อีกชั้น
-  // จะกลายเป็น ListView ซ้อน ListView แล้ว RenderViewport layout พังตามที่เจอ)
-  Widget _buildErrorState({required String message, required Future<void> Function() onRetry}) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const SizedBox(height: 90),
-        Icon(Icons.error_outline_rounded, size: 56, color: Colors.grey[400]),
-        const SizedBox(height: 12),
-        Text(message, textAlign: TextAlign.center, style: TextStyle(color: Colors.grey[600])),
-        const SizedBox(height: 14),
-        TextButton.icon(
-          onPressed: onRetry,
-          icon: const Icon(Icons.refresh_rounded, size: 18, color: _primary),
-          label: const Text('ลองอีกครั้ง', style: TextStyle(color: _primary, fontWeight: FontWeight.w600)),
-        ),
-      ],
-    );
-  }
-
-  // เนื้อหา empty state ล้วน ๆ ไม่ scroll เอง — ผู้เรียกต้องห่อด้วย ListView/Scrollable เอง
-  Widget _buildEmptyState({required IconData icon, required String title, String? subtitle}) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const SizedBox(height: 90),
-        Icon(icon, size: 64, color: Colors.grey[300]),
-        const SizedBox(height: 16),
-        Text(
-          title,
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 16, color: Colors.grey[600], fontWeight: FontWeight.w600),
-        ),
-        if (subtitle != null) ...[
-          const SizedBox(height: 8),
-          Text(
-            subtitle,
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 13, color: Colors.grey[400]),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildAppliedStoreCard(AppliedStoreData store) {
-    Color statusColor;
-    switch (store.status) {
-      case 'pending':
-        statusColor = _warning;
-        break;
-      case 'TEMP_CLOSED':
-        statusColor = _success;
-        break;
-      default:
-        statusColor = Colors.grey;
-    }
-
-    return InkWell(
-      onTap: () => _goToAppliedStoreDetail(store),
-      borderRadius: BorderRadius.circular(_cardRadius),
+  Widget _buildSearchField() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(_cardRadius),
+          borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 15,
-              offset: const Offset(0, 4),
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
           ],
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(16),
-              child: store.profileImage.isNotEmpty
-                  ? Image.network(
-                      store.profileImage,
-                      width: 70,
-                      height: 70,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) => _storeFallbackIcon(),
-                    )
-                  : _storeFallbackIcon(),
+        child: TextField(
+          controller: _searchController,
+          onChanged: _onSearchChanged,
+          style: const TextStyle(fontSize: 13),
+          decoration: InputDecoration(
+            hintText: 'ค้นหาร้านค้า (ชื่อ, ที่อยู่, เบอร์โทร)',
+            hintStyle: TextStyle(fontSize: 13, color: Colors.grey[500]),
+            prefixIcon: const Icon(
+              Icons.search_rounded,
+              size: 20,
+              color: Colors.grey,
             ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    store.storeName.isNotEmpty ? store.storeName : '-',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      store.statusLabel,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: statusColor,
+            suffixIcon: _searchLoading
+                ? const Padding(
+                    padding: EdgeInsets.all(14),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _primary,
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(Icons.phone, size: 14, color: Colors.grey[600]),
-                      const SizedBox(width: 4),
-                      Text(
-                        store.phone.isNotEmpty ? store.phone : '-',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 1),
-                        child: Icon(Icons.location_on_rounded, color: Colors.grey[700], size: 14),
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          store.address.isNotEmpty ? store.address : '-',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[700],
-                            height: 1.35,
+                  )
+                : (_searchQuery.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(
+                            Icons.close_rounded,
+                            size: 18,
+                            color: Colors.grey,
                           ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  onPressed: _unapplying ? null : _confirmUnapply,
-                  icon: _unapplying
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          onPressed: _clearSearch,
                         )
-                      : const Icon(Icons.delete_outline_rounded, color: _danger),
-                  tooltip: 'ยกเลิกการสมัคร',
-                ),
-                Icon(
-                  Icons.arrow_forward_ios_rounded,
-                  color: Colors.grey.shade400,
-                  size: 16,
-                ),
-              ],
+                      : null),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
             ),
-          ],
+            filled: true,
+            fillColor: Colors.white,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 12,
+            ),
+          ),
         ),
       ),
     );
   }
 
+  Widget _buildSortBar() {
+    const options = [
+      (StoreSortOption.distance, 'ใกล้ที่สุด'),
+      (StoreSortOption.rating, 'คะแนนสูงสุด'),
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Row(
+        children: [
+          for (final (option, label) in options) ...[
+            GestureDetector(
+              onTap: () => _selectSortOption(option),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: _sortOption == option ? _primary : Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: _sortOption == option
+                        ? _primary
+                        : Colors.grey.shade300,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(width: 5),
+                    Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: _sortOption == option
+                            ? Colors.white
+                            : Colors.grey[700],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (option != options.last.$1) const SizedBox(width: 8),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget? _buildLocationBanner() {
+    if (_locating && _userPosition == null) {
+      return _InfoBanner(
+        icon: Icons.location_searching_rounded,
+        color: _primary,
+        text: 'กำลังค้นหาตำแหน่งของคุณ เพื่อจัดเรียงร้านที่ใกล้ที่สุด...',
+      );
+    }
+    if (_locationError != null && _userPosition == null) {
+      return _InfoBanner(
+        icon: Icons.location_off_rounded,
+        color: _warning,
+        text: _locationError!,
+        actionLabel: 'ลองอีกครั้ง',
+        onAction: _startLocating,
+      );
+    }
+    return null;
+  }
+
   Widget _buildStoreCard(StoreListItem store) {
-    final isHiring = store.isHiring;
     final distance = _distanceToStore(store);
-    final showLocatingHint = distance == null &&
+    final showLocatingHint =
+        distance == null &&
         _locating &&
         !(store.latitude == 0 && store.longitude == 0);
 
     return InkWell(
-      onTap: () => Get.to(() => StoreDetailEmployeeScreen(store: store)),
+      onTap: () => _goToStoreDetail(store.storeId),
       borderRadius: BorderRadius.circular(16),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -988,30 +933,26 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
             Stack(
               clipBehavior: Clip.none,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: store.profileImage.isNotEmpty
-                      ? Image.network(
-                          store.profileImage,
-                          width: 64,
-                          height: 64,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _storeFallbackIcon(),
-                        )
-                      : _storeFallbackIcon(),
-                ),
+                _buildStoreImage(store.profileImage, size: 64, radius: 12),
                 Positioned(
                   top: -4,
                   right: -4,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
-                      color: isHiring ? _success : const Color(0xFF9CA3AF),
+                      color: _success,
                       borderRadius: BorderRadius.circular(6),
                     ),
-                    child: Text(
-                      isHiring ? 'เปิดรับ' : 'ปิดรับ',
-                      style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                    child: const Text(
+                      'เปิดรับ',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
@@ -1024,12 +965,18 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
                 children: [
                   Text(
                     store.storeName.isNotEmpty ? store.storeName : '-',
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, letterSpacing: -0.2),
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.2,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 6),
-                  Row(
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
                     children: [
                       _buildChip(
                         icon: Icons.star_rounded,
@@ -1040,7 +987,6 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
                             : 'ยังไม่มีรีวิว',
                         textColor: const Color(0xFF92400E),
                       ),
-                      const SizedBox(width: 6),
                       if (distance != null)
                         _buildChip(
                           icon: Icons.near_me_rounded,
@@ -1063,14 +1009,22 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.location_on_rounded, size: 13, color: Colors.grey[500]),
+                      Icon(
+                        Icons.location_on_rounded,
+                        size: 13,
+                        color: Colors.grey[500],
+                      ),
                       const SizedBox(width: 4),
                       Expanded(
                         child: Text(
                           store.address.isNotEmpty ? store.address : '-',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 12, color: Colors.grey[600], height: 1.3),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                            height: 1.3,
+                          ),
                         ),
                       ),
                     ],
@@ -1078,21 +1032,316 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      Icon(Icons.access_time_rounded, size: 13, color: Colors.grey[500]),
+                      Icon(
+                        Icons.access_time_rounded,
+                        size: 13,
+                        color: Colors.grey[500],
+                      ),
                       const SizedBox(width: 4),
-                      Text(
-                        store.openingHours.isNotEmpty ? '${store.openingHours} - ${store.closedHours}' : '-',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      Expanded(
+                        child: Text(
+                          store.openingHours.isNotEmpty
+                              ? '${store.openingHours} - ${store.closedHours}'
+                              : '-',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
                       ),
                     ],
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right_rounded, color: Colors.grey.shade400, size: 20),
+            Icon(
+              Icons.chevron_right_rounded,
+              color: Colors.grey.shade400,
+              size: 20,
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildAppliedTab() {
+    if (_loadingApplied) {
+      return const Center(child: CircularProgressIndicator(color: _primary));
+    }
+
+    if (_appliedError != null) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          _buildErrorState(
+            message: _appliedError!,
+            onRetry: _fetchAppliedStore,
+          ),
+        ],
+      );
+    }
+
+    if (_appliedStore == null) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          _buildEmptyState(
+            icon: Icons.assignment_late_outlined,
+            title: 'คุณยังไม่ได้สมัครร้านค้าใด',
+            subtitle: 'เลื่อนไปแท็บ "ร้านค้าทั้งหมด" เพื่อเลือกสมัคร',
+          ),
+        ],
+      );
+    }
+
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.only(top: 12, bottom: 20),
+      children: [_buildAppliedStoreCard(_appliedStore!)],
+    );
+  }
+
+  Widget _buildAppliedStoreCard(AppliedStoreData store) {
+    final isApproved = _isApprovedStatus(store.status);
+    final statusColor = _appliedStatusColor(store.status);
+
+    return InkWell(
+      onTap: () => _goToAppliedStoreDetail(store),
+      borderRadius: BorderRadius.circular(_cardRadius),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(_cardRadius),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.06),
+              blurRadius: 15,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildStoreImage(store.profileImage, size: 70, radius: 16),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        store.storeName.isNotEmpty ? store.storeName : '-',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusColor.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          store.statusLabel,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: statusColor,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(Icons.phone, size: 14, color: Colors.grey[600]),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              store.phone.isNotEmpty ? store.phone : '-',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(top: 1),
+                            child: Icon(
+                              Icons.location_on_rounded,
+                              color: Colors.grey[700],
+                              size: 14,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              store.address.isNotEmpty ? store.address : '-',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[700],
+                                height: 1.35,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      onPressed: _unapplying ? null : _confirmUnapply,
+                      tooltip: 'ยกเลิกการสมัคร',
+                      icon: _unapplying
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(
+                              Icons.delete_outline_rounded,
+                              color: _danger,
+                            ),
+                    ),
+                    Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      color: Colors.grey.shade400,
+                      size: 16,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            if (isApproved) ...[
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _goToWork,
+                  icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                  label: const Text('เริ่มทำงาน'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _success,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    elevation: 0,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorState({
+    required String message,
+    required Future<void> Function() onRetry,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(height: 90),
+        Icon(Icons.error_outline_rounded, size: 56, color: Colors.grey[400]),
+        const SizedBox(height: 12),
+        Text(
+          message,
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 14),
+        TextButton.icon(
+          onPressed: onRetry,
+          icon: const Icon(Icons.refresh_rounded, size: 18, color: _primary),
+          label: const Text(
+            'ลองอีกครั้ง',
+            style: TextStyle(color: _primary, fontWeight: FontWeight.w600),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyState({
+    required IconData icon,
+    required String title,
+    String? subtitle,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(height: 90),
+        Icon(icon, size: 64, color: Colors.grey[300]),
+        const SizedBox(height: 16),
+        Text(
+          title,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 16,
+            color: Colors.grey[600],
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        if (subtitle != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: Colors.grey[400]),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildStoreImage(
+    String imageUrl, {
+    required double size,
+    required double radius,
+  }) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: imageUrl.isNotEmpty
+          ? Image.network(
+              imageUrl,
+              width: size,
+              height: size,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) =>
+                  _storeFallbackIcon(size: size, radius: radius),
+            )
+          : _storeFallbackIcon(size: size, radius: radius),
     );
   }
 
@@ -1105,31 +1354,37 @@ class _StoreRegisterScreenState extends State<RegiserEmployeeStore>
   }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, size: 12, color: iconColor),
           const SizedBox(width: 3),
-          Text(text, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: textColor)),
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: textColor,
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _storeFallbackIcon() {
+  Widget _storeFallbackIcon({required double size, required double radius}) {
     return Container(
-      width: 70,
-      height: 70,
+      width: size,
+      height: size,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(radius),
         color: Colors.blue[100],
       ),
-      child: const Icon(
-        Icons.store_rounded,
-        color: _primary,
-        size: 32,
-      ),
+      child: Icon(Icons.store_rounded, color: _primary, size: size * 0.45),
     );
   }
 }
@@ -1166,7 +1421,12 @@ class _InfoBanner extends StatelessWidget {
           Expanded(
             child: Text(
               text,
-              style: TextStyle(fontSize: 12.5, color: color, fontWeight: FontWeight.w600, height: 1.3),
+              style: TextStyle(
+                fontSize: 12.5,
+                color: color,
+                fontWeight: FontWeight.w600,
+                height: 1.3,
+              ),
             ),
           ),
           if (actionLabel != null && onAction != null) ...[

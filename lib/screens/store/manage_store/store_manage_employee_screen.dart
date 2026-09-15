@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:developer';
 
 import 'package:flutter/material.dart';
@@ -5,11 +6,12 @@ import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:wash_and_dry/config/config.dart';
-import 'package:wash_and_dry/models/res/customer/store/res_laundry_staff_store.dart';
-import 'package:wash_and_dry/models/res/customer/store/res_rider_store.dart';
+import 'package:wash_and_dry/models/res/customer/store/res_employees_store.dart';
+import 'package:wash_and_dry/screens/store/manage_store/employee_report_screen.dart';
 import 'package:wash_and_dry/screens/store/manage_store/manage_applicants_screen.dart';
 
 import 'package:wash_and_dry/service/session_service.dart';
+
 class _Palette {
   static const primary = Color(0xFF0593FF);
   static const primaryTint = Color(0xFFEAF4FF);
@@ -25,7 +27,6 @@ class _Palette {
   static const divider = Color(0xFFE9EDF1);
 }
 
-// เก็บผลลัพธ์การแปลงสถานะดิบ (จาก backend) เป็นข้อความไทย + สถานะ active/inactive
 class _StatusInfo {
   final String label;
   final bool active;
@@ -41,14 +42,31 @@ class ManageEmployeeScreen extends StatefulWidget {
 
 class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
   String url = '';
+  String _storeId = '';
   bool _isLoading = true;
-  List<Rider> riders = [];
-  List<LaundryStaff> laundryStaff = [];
+
+  List<Employee> _employees = [];
+
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _debounce;
+
+  List<Employee> get riders =>
+      _employees.where((e) => e.isRider && _isKnownStatus(e.status)).toList();
+
+  List<Employee> get laundryStaff =>
+      _employees.where((e) => e.isStaff && _isKnownStatus(e.status)).toList();
 
   @override
   void initState() {
     super.initState();
     _loadData();
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -61,11 +79,9 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
       if (storeId == null) return;
 
       url = config['apiEndpoint']?.toString() ?? '';
+      _storeId = storeId;
 
-      await Future.wait([
-        _loadRiders(storeId),
-        _loadLaundryStaff(storeId),
-      ]);
+      await _loadEmployees(storeId, search: _searchController.text);
     } catch (e) {
       log('Error: $e');
     } finally {
@@ -73,39 +89,36 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
     }
   }
 
-
   bool _isKnownStatus(String rawStatus) {
     return rawStatus == 'ONLINE' || rawStatus == 'TEMP_CLOSED';
   }
 
-  Future<void> _loadRiders(String storeId) async {
+  Future<void> _loadEmployees(String storeId, {String search = ''}) async {
     try {
-      final response = await http.get(Uri.parse('$url/rider/store/$storeId'));
+      final query = search.trim().isEmpty
+          ? ''
+          : '?search=${Uri.encodeQueryComponent(search.trim())}';
+
+      final response =
+          await http.get(Uri.parse('$url/employees/store/$storeId$query'));
+
       if (response.statusCode == 200) {
-        final data = RiderResponse.fromJson(json.decode(response.body));
+        final data = EmployeeStoreResponse.fromJson(json.decode(response.body));
         if (data.ok) {
-          setState(() => riders =
-              data.data.where((r) => _isKnownStatus(r.status)).toList());
+          setState(() => _employees = data.data);
         }
       }
     } catch (e) {
-      log('Error riders: $e');
+      log('Error employees: $e');
     }
   }
 
-  Future<void> _loadLaundryStaff(String storeId) async {
-    try {
-      final response = await http.get(Uri.parse('$url/laundry_staff/store/$storeId'));
-      if (response.statusCode == 200) {
-        final data = LaundryStaffResponse.fromJson(json.decode(response.body));
-        if (data.ok) {
-          setState(() => laundryStaff =
-              data.data.where((s) => _isKnownStatus(s.status)).toList());
-        }
-      }
-    } catch (e) {
-      log('Error staff: $e');
-    }
+  void _onSearchChanged(String value) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 400), () {
+      if (_storeId.isEmpty) return;
+      _loadEmployees(_storeId, search: value);
+    });
   }
 
   Future<void> _deleteRider(String riderId) async {
@@ -286,49 +299,103 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
     );
   }
 
+  Widget _buildSearchBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: _Palette.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _Palette.divider),
+      ),
+      child: TextField(
+        controller: _searchController,
+        onChanged: _onSearchChanged,
+        style: const TextStyle(fontSize: 13.5, color: _Palette.ink),
+        decoration: InputDecoration(
+          border: InputBorder.none,
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(vertical: 14),
+          hintText: 'ค้นหาจากชื่อ, เบอร์โทร, อีเมล',
+          hintStyle: const TextStyle(fontSize: 13, color: _Palette.mutedLight),
+          prefixIcon: const Icon(Icons.search_rounded, size: 20, color: _Palette.muted),
+          suffixIcon: _searchController.text.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 18, color: _Palette.muted),
+                  onPressed: () {
+                    _searchController.clear();
+                    _onSearchChanged('');
+                    setState(() {});
+                  },
+                ),
+        ),
+        onTapOutside: (_) => FocusScope.of(context).unfocus(),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final total = riders.length + laundryStaff.length;
     return Scaffold(
       backgroundColor: _Palette.bg,
       extendBodyBehindAppBar: false,
       appBar: AppBar(
-  flexibleSpace: Container(
-    decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Color(0xFF0593FF), Color(0xFF0476D9)],
-      ),
-    ),
-  ),
-  elevation: 0,
-  leading: IconButton(
-    icon: const Icon(Icons.arrow_back_ios, color: Colors.white,),
-    onPressed: () => Navigator.pop(context),
-  ),
-  centerTitle: true,
-  title: const Text(
-    'จัดการพนักงาน',
-    style: TextStyle(
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF0593FF), Color(0xFF0476D9)],
+            ),
+          ),
+        ),
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+        centerTitle: true,
+        title: const Text(
+          'จัดการพนักงาน',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 17,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.2,
+          ),
+        ),
+        actions: [
+  IconButton(
+    tooltip: 'รายงานการทำงาน',
+    icon: const Icon(
+      Icons.analytics_rounded,
       color: Colors.white,
-      fontSize: 17,
-      fontWeight: FontWeight.w800,
-      letterSpacing: -0.2,
     ),
+    onPressed: () {
+      Get.to(
+        () => const EmployeeReportScreen(),
+      );
+    },
   ),
-  actions: [
-    IconButton(
-      tooltip: 'ผู้สมัครรอยืนยัน',
-      icon: const Icon(Icons.person_add_alt_1_rounded, color: Colors.white),
-      onPressed: () async {
-        final result = await Get.to(() => const ManageApplicantsScreen());
 
-        if (result == true) _loadData();
-      },
+  IconButton(
+    tooltip: 'ผู้สมัครรอยืนยัน',
+    icon: const Icon(
+      Icons.person_add_alt_1_rounded,
+      color: Colors.white,
     ),
-  ],
-),
+    onPressed: () async {
+      final result = await Get.to(
+        () => const ManageApplicantsScreen(),
+      );
+
+      if (result == true) {
+        _loadData();
+      }
+    },
+  ),
+],
+      ),
       body: _isLoading
           ? const Center(
               child: CircularProgressIndicator(color: _Palette.primary, strokeWidth: 2.6),
@@ -339,9 +406,10 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
                 children: [
+                  _buildSearchBar(),
+                  const SizedBox(height: 18),
                   _buildSection(
                     title: 'รายชื่อพนักงาน Rider',
-                    icon: Icons.delivery_dining_rounded,
                     count: riders.length,
                     tint: _Palette.primaryTint,
                     iconColor: _Palette.primary,
@@ -350,14 +418,15 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
                   if (riders.isEmpty)
                     _buildEmptyState(
                       icon: Icons.delivery_dining_rounded,
-                      message: 'ยังไม่มี Rider ในร้านนี้',
+                      message: _searchController.text.isEmpty
+                          ? 'ยังไม่มี Rider ในร้านนี้'
+                          : 'ไม่พบ Rider ที่ตรงกับคำค้นหา',
                     )
                   else
                     ...riders.map((r) => _buildRiderCard(r)),
                   const SizedBox(height: 26),
                   _buildSection(
                     title: 'รายชื่อพนักงานซักอบ',
-                    icon: Icons.local_laundry_service_rounded,
                     count: laundryStaff.length,
                     tint: _Palette.mintTint,
                     iconColor: _Palette.primary,
@@ -366,7 +435,9 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
                   if (laundryStaff.isEmpty)
                     _buildEmptyState(
                       icon: Icons.local_laundry_service_rounded,
-                      message: 'ยังไม่มีพนักงานซักอบในร้านนี้',
+                      message: _searchController.text.isEmpty
+                          ? 'ยังไม่มีพนักงานซักอบในร้านนี้'
+                          : 'ไม่พบพนักงานซักอบที่ตรงกับคำค้นหา',
                     )
                   else
                     ...laundryStaff.map((s) => _buildStaffCard(s)),
@@ -378,7 +449,6 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
 
   Widget _buildSection({
     required String title,
-    required IconData icon,
     required int count,
     required Color tint,
     required Color iconColor,
@@ -391,9 +461,8 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
             color: tint,
             borderRadius: BorderRadius.circular(11),
           ),
-          child: Icon(icon, size: 17, color: iconColor),
         ),
-        const SizedBox(width: 10),
+
         Expanded(
           child: Text(
             title,
@@ -443,9 +512,6 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
     );
   }
 
-  // แปลงค่าสถานะดิบจาก backend (ONLINE / TEMP_CLOSED / ...) เป็นข้อความไทย + ค่า active
-  // ONLINE      -> "ใช้งาน"      (active = true)
-  // TEMP_CLOSED -> "ปิดชั่วคราว" (active = false)
   _StatusInfo _resolveStatus(String rawStatus) {
     switch (rawStatus) {
       case 'ONLINE':
@@ -560,7 +626,6 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
     );
   }
 
-
   Widget _iconLine({
     required IconData icon,
     required String text,
@@ -584,7 +649,7 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
     );
   }
 
-  Widget _buildRiderCard(Rider rider) {
+  Widget _buildRiderCard(Employee rider) {
     final statusInfo = _resolveStatus(rider.status);
     return _cardShell(
       child: Row(
@@ -632,8 +697,8 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
                   runSpacing: 6,
                   children: [
                     _metaTag(Icons.phone_rounded, rider.phone),
-                    _metaTag(Icons.two_wheeler_rounded, rider.vehicleType),
-                    _metaTag(Icons.badge_outlined, rider.licensePlate.toUpperCase()),
+                    _metaTag(Icons.two_wheeler_rounded, rider.vehicleType ?? ''),
+                    _metaTag(Icons.badge_outlined, (rider.licensePlate ?? '').toUpperCase()),
                   ],
                 ),
               ],
@@ -644,7 +709,7 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
               _showDeleteDialog(
                 title: 'ยืนยันการลบ Rider',
                 name: rider.fullName,
-                onConfirm: () => _deleteRider(rider.riderId),
+                onConfirm: () => _deleteRider(rider.id),
               );
             },
             icon: const Icon(Icons.delete_outline_rounded, size: 19, color: Colors.red),
@@ -657,7 +722,7 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
     );
   }
 
-  Widget _buildStaffCard(LaundryStaff staff) {
+  Widget _buildStaffCard(Employee staff) {
     final statusInfo = _resolveStatus(staff.status);
     return _cardShell(
       child: Row(
@@ -709,7 +774,7 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
               _showDeleteDialog(
                 title: 'ยืนยันการลบพนักงานซักอบ',
                 name: staff.fullName,
-                onConfirm: () => _deleteStaff(staff.staffId),
+                onConfirm: () => _deleteStaff(staff.id),
               );
             },
             icon: const Icon(Icons.delete_outline_rounded, size: 19, color: _Palette.mutedLight),

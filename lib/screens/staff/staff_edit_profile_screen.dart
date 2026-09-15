@@ -392,10 +392,12 @@ class _EditLaundryStaffScreenState extends State<EditLaundryStaffScreen> {
           icon: const Icon(Icons.arrow_back_ios),
           onPressed: () => Navigator.pop(context),
         ),
-        flexibleSpace: Container(
+          flexibleSpace: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
               colors: [_primary, _primaryDark],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
             ),
           ),
         ),

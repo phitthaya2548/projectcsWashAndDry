@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
 import 'package:flutter/material.dart';
@@ -9,8 +10,12 @@ import 'package:wash_and_dry/models/req/customer/req_address_customer.dart';
 import 'package:wash_and_dry/models/res/customer/res_store_customer.dart';
 import 'package:wash_and_dry/models/res/customer/store/res_review_store.dart';
 import 'package:wash_and_dry/screens/customer/customer_address_screen.dart';
+
 import 'package:wash_and_dry/screens/customer/customer_detailstore_screen.dart';
 import 'package:wash_and_dry/screens/customer/wallet/customer_topup_screen.dart';
+import 'package:wash_and_dry/screens/notification_history_screen.dart';
+import 'package:wash_and_dry/service/notification_api_service.dart';
+import 'package:wash_and_dry/service/notification_service.dart';
 import 'package:wash_and_dry/service/session_service.dart';
 import 'package:wash_and_dry/widgets/drawercustomer.dart';
 
@@ -30,9 +35,11 @@ class HomeScreenState extends State<HomeScreen> {
   int selectedFilterIndex = 0;
   Address? defaultAddress;
   double? lat = 0.0, lng = 0.0;
+  int _unreadCount =0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   
   final Map<String, double> _ratingCache = {};
+  StreamSubscription<String?>? _orderUpdateSub;
 
  
   static const _pendingStatuses = [
@@ -47,8 +54,15 @@ class HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _init();
+      _orderUpdateSub = NotificationService().onOrderUpdate.listen((_) {
+      if (mounted) _loadUnreadCount();
+    });
   }
-
+@override
+  void dispose() {
+    _orderUpdateSub?.cancel();
+    super.dispose();
+  }
   Future<void> _init() async {
     final config = await Configuration.getConfig();
     url = config['apiEndpoint'];
@@ -59,7 +73,14 @@ class HomeScreenState extends State<HomeScreen> {
       _futureStores = fetchStores();
     });
     _listenWallet();
+    _loadUnreadCount();
   }
+  Future<void> _loadUnreadCount() async {
+  final count = await NotificationApiService.getMyUnreadCount();
+  if (mounted) {
+    setState(() => _unreadCount = count);
+  }
+}
 
   void _listenWallet() {
     if (customerId == null) return;
@@ -152,7 +173,7 @@ Future<List<Store>> _sortByRealRating(List<Store> stores) async {
 
   Future<void> refresh() => _refreshData();
 
-  // ป้ายข้อความสถานะร้าน
+
   String _statusText(String status) {
     switch (status) {
       case 'OPEN':
@@ -164,7 +185,7 @@ Future<List<Store>> _sortByRealRating(List<Store> stores) async {
     }
   }
 
-  // สีป้ายสถานะร้าน
+
   Color _statusColor(String status) {
     switch (status) {
       case 'OPEN':
@@ -402,32 +423,66 @@ Future<List<Store>> _sortByRealRating(List<Store> stores) async {
       ),
     );
   }
+Widget _circleIconButton(IconData icon) {
+  return InkWell(
+  onTap: () async {
+    if (icon == Icons.menu) {
+      _scaffoldKey.currentState?.openDrawer();
+    } else {
+      final customerId = await Session().getCustomerId();
 
-  Widget _circleIconButton(IconData icon) {
-    return InkWell(
-      onTap: () {
-        if(icon == Icons.menu){
-           _scaffoldKey.currentState?.openDrawer();
-        }
-        else{
+if (customerId == null || customerId.isEmpty) return;
 
-        }
-      },
-      borderRadius: BorderRadius.circular(25),
-      child: Container(
-        width: 50,
-        height: 50,
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.25),
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white.withOpacity(0.4), width: 1.5),
+await Get.to(
+  () => NotificationHistoryScreen(
+    userId: customerId,
+    userRole: 'customer',
+  ),
+);
+      _loadUnreadCount();
+    }
+  },
+    borderRadius: BorderRadius.circular(25),
+    child: Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: 50,
+          height: 50,
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.25),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white.withOpacity(0.4), width: 1.5),
+          ),
+          child: Icon(icon, color: Colors.white, size: 24),
         ),
-        child: Icon(icon, color: Colors.white, size: 24),
-      ),
-    );
-  }
-
-
+        if (icon != Icons.menu && _unreadCount > 0)
+          Positioned(
+            right: -2,
+            top: -2,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+              constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+              decoration: BoxDecoration(
+                color: Colors.red,
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: Colors.white, width: 1),
+              ),
+              child: Text(
+                _unreadCount > 99 ? '99+' : _unreadCount.toString(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+      ],
+    ),
+  );
+}
   Widget _buildSearchBar() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
@@ -512,13 +567,7 @@ Future<List<Store>> _sortByRealRating(List<Store> stores) async {
             'ร้านยอดนิยมใกล้คุณ',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
           ),
-          TextButton(
-            onPressed: () {},
-            child: const Text(
-              'ดูทั้งหมด',
-              style: TextStyle(fontSize: 14, color: Color(0xFF0593FF)),
-            ),
-          ),
+         
         ],
       ),
     );
@@ -564,7 +613,7 @@ Future<List<Store>> _sortByRealRating(List<Store> stores) async {
       }
 
       if (selectedFilterIndex == 2) {
-        // ต้องรอคะแนนจริงของทุกร้านมาก่อน ค่อย sort
+
         return FutureBuilder<List<Store>>(
           future: _sortByRealRating(stores),
           builder: (context, sortedSnap) {

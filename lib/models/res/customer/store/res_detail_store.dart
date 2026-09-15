@@ -22,8 +22,9 @@ class StoreDetail {
   final double latitude;
   final double longitude;
   final String profileImage;
-
-  // 🔥 เพิ่มตรงนี้
+  final int detergentprice;
+  final double min_delivery_price;
+  final double max_delivery_price;
   final int machineWashCount;
   final int machineDryCount;
 
@@ -36,7 +37,7 @@ class StoreDetail {
     required this.openingHours,
     required this.closedHours,
     required this.serviceRadius,
-    required this.rating,
+    this.rating = 0,
     required this.address,
     required this.phone,
     required this.email,
@@ -46,31 +47,49 @@ class StoreDetail {
     required this.longitude,
     this.profileImage = '',
     required this.machineWashCount,
+    required this.min_delivery_price,
+    required this.max_delivery_price,
     required this.machineDryCount,
+    required this.detergentprice,
   });
 
   factory StoreDetail.fromJson(Map<String, dynamic> json) {
-    // 🔥 รองรับกรณี response มี data ครอบมา
-    final data = json["data"] ?? json;
+    final data = (json['data'] ?? json) as Map<String, dynamic>;
+
+    double toDouble(dynamic v) {
+      if (v == null) return 0.0;
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString()) ?? 0.0;
+    }
+
+    int toInt(dynamic v) {
+      if (v == null) return 0;
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      return int.tryParse(v.toString()) ?? 0;
+    }
 
     return StoreDetail(
-      storeId: data['store_id'] ?? '',
-      storeName: data['store_name'] ?? '',
-      status: data['status'] ?? 'OPEN',
-      openingHours: data['opening_hours'] ?? '',
-      closedHours: data['closed_hours'] ?? '',
-      serviceRadius: (data['service_radius'] ?? 0).toDouble(),
-      rating: (data['rating'] ?? 0).toDouble(),
-      address: data['address'] ?? '',
-      phone: data['phone'] ?? '',
-      email: data['email'] ?? '',
-      facebook: data['facebook'] ?? '',
-      lineId: data['line_id'] ?? '',
-      latitude: (data['latitude'] ?? 0).toDouble(),
-      longitude: (data['longitude'] ?? 0).toDouble(),
-      profileImage: data['profile_image'] ?? '',
-      machineWashCount: data['machine_wash_count'] ?? 0,
-      machineDryCount: data['machine_dry_count'] ?? 0,
+      storeId: data['store_id']?.toString() ?? '',
+      storeName: data['store_name']?.toString() ?? '',
+      status: data['status']?.toString() ?? 'OPEN',
+      openingHours: data['opening_hours']?.toString() ?? '',
+      closedHours: data['closed_hours']?.toString() ?? '',
+      serviceRadius: toDouble(data['service_radius']),
+      rating: toDouble(data['rating']),
+      address: data['address']?.toString() ?? '',
+      phone: data['phone']?.toString() ?? '',
+      email: data['email']?.toString() ?? '',
+      facebook: data['facebook']?.toString() ?? '',
+      lineId: data['line_id']?.toString() ?? '',
+      latitude: toDouble(data['latitude']),
+      longitude: toDouble(data['longitude']),
+      profileImage: data['profile_image']?.toString() ?? '',
+      machineWashCount: toInt(data['machine_wash_count']),
+       min_delivery_price: toDouble(data['min_delivery']),
+  max_delivery_price: toDouble(data['max_delivery']), 
+      machineDryCount: toInt(data['machine_dry_count']),
+      detergentprice: toInt(data['detergent_price']),
     );
   }
 
@@ -90,7 +109,10 @@ class StoreDetail {
         'latitude': latitude,
         'longitude': longitude,
         'profile_image': profileImage,
+        'min_delivery_price': min_delivery_price,
+        'max_delivery_price': max_delivery_price,
         'machine_wash_count': machineWashCount,
         'machine_dry_count': machineDryCount,
+        'detergent_price': detergentprice,
       };
 }

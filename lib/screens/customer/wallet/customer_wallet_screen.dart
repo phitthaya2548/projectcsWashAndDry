@@ -1,22 +1,24 @@
+import 'dart:convert';
 import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:http/http.dart' as http;
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart';
 import 'package:wash_and_dry/config/config.dart';
+
+import 'package:wash_and_dry/models/res/customer/res_wallet_history_customer.dart';
 import 'package:wash_and_dry/screens/customer/wallet/customer_topup_screen.dart';
 import 'package:wash_and_dry/service/session_service.dart';
 
-// ── Transaction Model ──
 class WalletTransaction {
   final String id;
-  final String type; // 'topup' | 'payment'
+  final String type;
   final double amount;
   final String label;
   final String subtitle;
   final DateTime? datetime;
 
-  WalletTransaction({
+  const WalletTransaction({
     required this.id,
     required this.type,
     required this.amount,
@@ -24,6 +26,69 @@ class WalletTransaction {
     required this.subtitle,
     this.datetime,
   });
+
+  bool get isTopup => type == 'topup';
+}
+
+class _ListEntry {
+  final String? header;
+  final WalletTransaction? transaction;
+
+  const _ListEntry.header(this.header) : transaction = null;
+  const _ListEntry.item(this.transaction) : header = null;
+
+  bool get isHeader => header != null;
+}
+
+class _WalletDateGrouper {
+  static const List<String> _thaiMonths = [
+    '',
+    'มกราคม',
+    'กุมภาพันธ์',
+    'มีนาคม',
+    'เมษายน',
+    'พฤษภาคม',
+    'มิถุนายน',
+    'กรกฎาคม',
+    'สิงหาคม',
+    'กันยายน',
+    'ตุลาคม',
+    'พฤศจิกายน',
+    'ธันวาคม',
+  ];
+
+  static String headerFor(DateTime dt) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(dt.year, dt.month, dt.day);
+    final diff = today.difference(target).inDays;
+
+    if (diff == 0) return 'วันนี้';
+    if (diff == 1) return 'เมื่อวาน';
+    return '${dt.day} ${_thaiMonths[dt.month]} ${dt.year + 543}';
+  }
+
+  static String formatTime(DateTime dt) {
+    return '${dt.hour.toString().padLeft(2, '0')}:'
+        '${dt.minute.toString().padLeft(2, '0')}';
+  }
+
+  static List<_ListEntry> group(List<WalletTransaction> transactions) {
+    final entries = <_ListEntry>[];
+    String? lastHeader;
+
+    for (final tx in transactions) {
+      final header = tx.datetime != null
+          ? headerFor(tx.datetime!)
+          : 'ไม่ทราบวันที่';
+      if (header != lastHeader) {
+        entries.add(_ListEntry.header(header));
+        lastHeader = header;
+      }
+      entries.add(_ListEntry.item(tx));
+    }
+    return entries;
+  }
 }
 
 class WalletCustomerScreen extends StatefulWidget {
@@ -39,17 +104,31 @@ class _WalletCustomerScreenState extends State<WalletCustomerScreen> {
 
   double _balance = 0;
   List<WalletTransaction> _transactions = [];
-  bool _loading = true;
-  String? _customerId;
-
-  // เก็บ list แยกก่อนรวม
   List<WalletTransaction> _topups = [];
   List<WalletTransaction> _payments = [];
+  bool _loading = true;
+  String? _customerId;
+  String _apiUrl = '';
+
+  static const Map<String, String> _serviceLabels = {
+    'wash': 'ซักอย่างเดียว',
+    'dry': 'อบอย่างเดียว',
+    'wash_dry': 'ซักและอบ',
+  };
 
   @override
   void initState() {
     super.initState();
     _loadWallet();
+  }
+
+  Future<void> _loadConfig() async {
+    try {
+      final config = await Configuration.getConfig();
+      _apiUrl = config['apiEndpoint']?.toString() ?? '';
+    } catch (_) {
+      _apiUrl = '';
+    }
   }
 
   Future<void> _loadWallet() async {
@@ -59,9 +138,16 @@ class _WalletCustomerScreenState extends State<WalletCustomerScreen> {
       setState(() => _loading = false);
       return;
     }
+
+    await _loadConfig();
+    if (_apiUrl.isEmpty) {
+      _showSnackbar("ไม่พบการตั้งค่า API");
+      setState(() => _loading = false);
+      return;
+    }
+
     _listenBalance();
-    _listenTopup();
-    _listenPayment();
+    await _fetchAllHistory();
   }
 
   void _listenBalance() {
@@ -76,68 +162,87 @@ class _WalletCustomerScreenState extends State<WalletCustomerScreen> {
     }, onError: (e) => _showSnackbar("เกิดข้อผิดพลาด: $e"));
   }
 
-  void _listenTopup() {
-    final customerRef = _firestore.collection('customers').doc(_customerId);
-    _firestore
-        .collection('topup_history')
-        .where('customer_id', isEqualTo: customerRef)
-        .orderBy('topup_datetime', descending: true)
-        .limit(50)
-        .snapshots()
-        .listen((snap) {
-          if (!mounted) return;
-          _topups = snap.docs.map((doc) {
-            final data = doc.data();
-            final order_datetime = (data['topup_datetime'] as Timestamp?)?.toDate();
-            return WalletTransaction(
-              id: doc.id,
-              type: 'topup',
-              amount: (data['amount'] ?? 0).toDouble(),
-              label: 'เติมเงิน',
-              subtitle: 'บริการเติมเงิน',
-              datetime: order_datetime,
-            );
-          }).toList();
-          _mergeAndUpdate();
-        }, onError: (e) => log('topup error: $e'));
+  Future<void> _fetchAllHistory() async {
+    await Future.wait([_fetchTopupHistory(), _fetchPaymentHistory()]);
+    _mergeAndUpdate();
   }
 
-  void _listenPayment() {
-    final customerRef = _firestore.collection('customers').doc(_customerId);
-    _firestore
-        .collection('orders')
-        .where('customer_id', isEqualTo: customerRef)
-        .where('status', isEqualTo: 'completed')
-        .orderBy('order_datetime', descending: true)
-        .limit(50)
-        .snapshots()
-        .listen((snap) {
-          if (!mounted) return;
-          _payments = snap.docs.map((doc) {
-            final data = doc.data();
-            final  order_datetime = (data['order_datetime'] as Timestamp?)?.toDate();
-            final serviceLabel =
-                {
-                  'wash': 'ซักอย่างเดียว',
-                  'dry': 'อบอย่างเดียว',
-                  'wash_dry': 'ซักและอบ',
-                }[data['service_type']] ??
-                data['service_type'] ??
-                '';
-            final total =
-                ((data['service_price'] ?? 0) + (data['delivery_price'] ?? 0))
-                    .toDouble();
-            return WalletTransaction(
-              id: doc.id,
+  Future<void> _fetchTopupHistory() async {
+    try {
+      final uri = Uri.parse("$_apiUrl/wallet/history/topup/$_customerId");
+      final res = await http.get(uri);
+      if (res.statusCode != 200) {
+        log('topup history http error: ${res.statusCode}');
+        return;
+      }
+
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final parsed = HistoryResponse<TopupHistoryItem>.fromJson(
+        body,
+        (e) => TopupHistoryItem.fromJson(e),
+      );
+      if (!parsed.ok) {
+        log('topup history not ok: ${parsed.message}');
+        return;
+      }
+
+      _topups = parsed.data
+          .map(
+            (item) => WalletTransaction(
+              id: item.topupId,
+              type: 'topup',
+              amount: item.amount.toDouble(),
+              label: 'เติมเงิน',
+              subtitle: 'บริการเติมเงิน',
+              datetime: item.datetime,
+            ),
+          )
+          .toList();
+    } catch (e) {
+      log('topup error: $e');
+    }
+  }
+
+  Future<void> _fetchPaymentHistory() async {
+    try {
+      final uri = Uri.parse("$_apiUrl/wallet/history/paid_orders/$_customerId");
+      final res = await http.get(uri);
+      if (res.statusCode != 200) {
+        log('payment history http error: ${res.statusCode}');
+        return;
+      }
+
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final parsed = HistoryResponse<PaidOrderHistoryItem>.fromJson(
+        body,
+        (e) => PaidOrderHistoryItem.fromJson(e),
+      );
+      if (!parsed.ok) {
+        log('payment history not ok: ${parsed.message}');
+        return;
+      }
+
+      _payments = parsed.data
+          .map(
+            (item) => WalletTransaction(
+              id: item.orderId,
               type: 'payment',
-              amount: total,
+              amount: item.totalAmount.toDouble(),
               label: 'ชำระค่าบริการ',
-              subtitle: serviceLabel,
-              datetime: order_datetime,
-            );
-          }).toList();
-          _mergeAndUpdate();
-        }, onError: (e) => log('payment error: $e'));
+              subtitle: _serviceLabels[item.serviceType] ?? item.serviceType,
+              datetime: item.datetime,
+            ),
+          )
+          .toList();
+    } catch (e) {
+      log('payment error: $e');
+    }
+  }
+
+  Future<void> _refreshHistory() async {
+    if (_customerId == null || _apiUrl.isEmpty) return;
+    setState(() => _loading = true);
+    await _fetchAllHistory();
   }
 
   void _mergeAndUpdate() {
@@ -147,6 +252,7 @@ class _WalletCustomerScreenState extends State<WalletCustomerScreen> {
         if (b.datetime == null) return -1;
         return b.datetime!.compareTo(a.datetime!);
       });
+    if (!mounted) return;
     setState(() {
       _transactions = all;
       _loading = false;
@@ -159,27 +265,21 @@ class _WalletCustomerScreenState extends State<WalletCustomerScreen> {
     }
   }
 
- String _formatDate(DateTime? dt) {
-  if (dt == null) return '-';
-
-  const m = [
-    '',
-    'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน',
-    'พฤษภาคม', 'มิถุนายน', 'กรกฎาคม', 'สิงหาคม',
-    'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม',
-  ];
-
-  return '${dt.day} ${m[dt.month]} ${dt.year + 543} '
-      '${dt.hour.toString().padLeft(2, '0')}:'
-      '${dt.minute.toString().padLeft(2, '0')}';
-}
+  Future<void> _goToTopup() async {
+    final result = await Get.to(() => TopupCustomer());
+    if (result == true) {
+      _refreshHistory();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: _buildAppBar(),
       backgroundColor: const Color(0xFFF5F7FB),
-      body: _loading ? _buildLoading() : _buildContent(),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _buildContent(),
     );
   }
 
@@ -187,14 +287,14 @@ class _WalletCustomerScreenState extends State<WalletCustomerScreen> {
     final bool showBack = Get.arguments?["fromGet"] == true;
     return AppBar(
       flexibleSpace: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF0593FF), Color(0xFF0476D9)],
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF0593FF), Color(0xFF0476D9)],
+            ),
           ),
         ),
-      ),
       title: const Text(
         "กระเป๋าเงิน",
         style: TextStyle(fontWeight: FontWeight.w700, color: Colors.white),
@@ -212,21 +312,43 @@ class _WalletCustomerScreenState extends State<WalletCustomerScreen> {
     );
   }
 
-  Widget _buildLoading() => const Center(child: CircularProgressIndicator());
-
   Widget _buildContent() {
     return Column(
       children: [
         const SizedBox(height: 16),
-        _buildBalanceCard(),
+        _BalanceCard(balance: _balance, onTopupPressed: _goToTopup),
         _buildHistoryHeader(),
         const SizedBox(height: 12),
-        _buildHistoryList(),
+        _HistoryList(transactions: _transactions),
       ],
     );
   }
 
-  Widget _buildBalanceCard() {
+  Widget _buildHistoryHeader() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Row(
+        children: [
+          const Text(
+            "รายการล่าสุด",
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+          ),
+          const Spacer(),
+          Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey[600]),
+        ],
+      ),
+    );
+  }
+}
+
+class _BalanceCard extends StatelessWidget {
+  final double balance;
+  final VoidCallback onTopupPressed;
+
+  const _BalanceCard({required this.balance, required this.onTopupPressed});
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.all(16),
@@ -276,7 +398,7 @@ class _WalletCustomerScreenState extends State<WalletCustomerScreen> {
                   style: TextStyle(color: Colors.white70, fontSize: 14),
                 ),
                 Text(
-                  "${_balance.toStringAsFixed(0)} บาท",
+                  "${balance.toStringAsFixed(0)} บาท",
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 24,
@@ -287,7 +409,7 @@ class _WalletCustomerScreenState extends State<WalletCustomerScreen> {
             ),
           ),
           ElevatedButton(
-            onPressed: () => Get.to(() => TopupCustomer()),
+            onPressed: onTopupPressed,
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.white,
               foregroundColor: const Color(0xFF0593FF),
@@ -305,25 +427,16 @@ class _WalletCustomerScreenState extends State<WalletCustomerScreen> {
       ),
     );
   }
+}
 
-  Widget _buildHistoryHeader() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        children: [
-          const Text(
-            "รายการล่าสุด",
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-          ),
-          const Spacer(),
-          Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey[600]),
-        ],
-      ),
-    );
-  }
+class _HistoryList extends StatelessWidget {
+  final List<WalletTransaction> transactions;
 
-  Widget _buildHistoryList() {
-    if (_transactions.isEmpty) {
+  const _HistoryList({required this.transactions});
+
+  @override
+  Widget build(BuildContext context) {
+    if (transactions.isEmpty) {
       return const Expanded(
         child: Center(
           child: Text("ไม่มีรายการ", style: TextStyle(color: Colors.grey)),
@@ -331,20 +444,50 @@ class _WalletCustomerScreenState extends State<WalletCustomerScreen> {
       );
     }
 
+    final entries = _WalletDateGrouper.group(transactions);
+
     return Expanded(
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: _transactions.length,
+        itemCount: entries.length,
         itemBuilder: (context, index) {
-          final tx = _transactions[index];
+          final entry = entries[index];
+          if (entry.isHeader) {
+            return _DateHeader(text: entry.header!, isFirst: index == 0);
+          }
+          final tx = entry.transaction!;
           return _TransactionCard(
             type: tx.label,
             subtitle: tx.subtitle,
-            datetime: _formatDate(tx.datetime),
+            time: tx.datetime != null
+                ? _WalletDateGrouper.formatTime(tx.datetime!)
+                : '-',
             amount: tx.amount,
-            isTopup: tx.type == 'topup',
+            isTopup: tx.isTopup,
           );
         },
+      ),
+    );
+  }
+}
+
+class _DateHeader extends StatelessWidget {
+  final String text;
+  final bool isFirst;
+
+  const _DateHeader({required this.text, required this.isFirst});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(top: isFirst ? 0 : 16, bottom: 8),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+          color: Colors.grey[500],
+        ),
       ),
     );
   }
@@ -353,20 +496,23 @@ class _WalletCustomerScreenState extends State<WalletCustomerScreen> {
 class _TransactionCard extends StatelessWidget {
   final String type;
   final String subtitle;
-  final String datetime;
+  final String time;
   final double amount;
   final bool isTopup;
 
   const _TransactionCard({
     required this.type,
     required this.subtitle,
-    required this.datetime,
+    required this.time,
     required this.amount,
     required this.isTopup,
   });
 
   @override
   Widget build(BuildContext context) {
+    final color = isTopup ? const Color(0xFF22C55E) : const Color(0xFFEF4444);
+    final sign = isTopup ? '+' : '-';
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
@@ -396,7 +542,7 @@ class _TransactionCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  datetime,
+                  time,
                   style: TextStyle(fontSize: 13, color: Colors.grey[500]),
                 ),
               ],
@@ -415,21 +561,17 @@ class _TransactionCard extends StatelessWidget {
                         : "assets/icons/cut_money.png",
                     width: 36,
                     height: 36,
-                    color: isTopup ? null : const Color(0xFFEF4444),
+                    color: isTopup ? null : color,
                   ),
                 ),
               ),
               const SizedBox(height: 4),
               Text(
-                isTopup
-                    ? "+${amount.toStringAsFixed(0)} ฿"
-                    : "-${amount.toStringAsFixed(0)} ฿",
+                "$sign${amount.toStringAsFixed(0)} ฿",
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w700,
-                  color: isTopup
-                      ? const Color(0xFF22C55E)
-                      : const Color(0xFFEF4444),
+                  color: color,
                 ),
               ),
             ],
