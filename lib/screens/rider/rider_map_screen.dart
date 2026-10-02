@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'dart:ui' as ui;
 
@@ -9,6 +10,7 @@ import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 import 'package:wash_and_dry/config/config.dart';
 import 'package:wash_and_dry/service/session_service.dart';
 import 'package:wash_and_dry/widgets/appbarrider.dart';
@@ -235,6 +237,36 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
       );
   }
 
+  /// ตั้งค่า GPS ให้ทำงานต่อได้ตอนสลับไปแอปนำทางอื่น
+  LocationSettings _gpsSettings() {
+    if (Platform.isAndroid) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 5,
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: 'กำลังแชร์ตำแหน่งไรเดอร์',
+          notificationText: 'แอปกำลังอัปเดตตำแหน่งของคุณให้ลูกค้า',
+          enableWakeLock: true,
+        ),
+      );
+    }
+
+    if (Platform.isIOS) {
+      return AppleSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 5,
+        allowBackgroundLocationUpdates: true,
+        showBackgroundLocationIndicator: true,
+        pauseLocationUpdatesAutomatically: false,
+      );
+    }
+
+    return const LocationSettings(
+      accuracy: LocationAccuracy.bestForNavigation,
+      distanceFilter: 5,
+    );
+  }
+
   Future<void> _startGps(String riderId) async {
     if (!await Geolocator.isLocationServiceEnabled()) {
       if (mounted) setState(() => _gpsWarning = 'กรุณาเปิด GPS');
@@ -257,10 +289,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
     _gpsSub?.cancel();
     _gpsSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 5,
-      ),
+      locationSettings: _gpsSettings(),
     ).listen(
       (pos) {
         _gpsPosition = pos;
@@ -749,6 +778,59 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
       CameraPosition(target: rider, zoom: 18.0, tilt: 0, bearing: _bearing),
     );
   }
+
+
+
+  Future<void> _openGoogleMaps(_Destination job) async {
+    final lat = job.lat;
+    final lng = job.lng;
+
+    final webUri = Uri.parse(
+      'https://www.google.com/maps/dir/?api=1'
+      '&destination=$lat,$lng&travelmode=driving',
+    );
+
+    // หยุดโหมดนำทางในแอปก่อนสลับไป Google Maps
+    if (_navigationMode && mounted) setState(() => _navigationMode = false);
+
+
+    if (Platform.isIOS) {
+      try {
+        final appUri = Uri.parse(
+          'comgooglemaps://?daddr=$lat,$lng&directionsmode=driving',
+        );
+        if (await launchUrl(appUri, mode: LaunchMode.externalApplication)) {
+          return;
+        }
+      } catch (_) {}
+    }
+
+
+    try {
+      final ok = await launchUrl(webUri, mode: LaunchMode.externalApplication);
+      if (!ok) _showNavError();
+    } catch (_) {
+      _showNavError();
+    }
+  }
+
+  void _showNavError() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('ไม่สามารถเปิด Google Maps ได้')),
+    );
+  }
+
+  Widget _googleMapsLogo({double size = 26}) {
+    return Image.asset(
+      'assets/images/googlemap.png',
+      width: size,
+      height: size,
+      errorBuilder: (_, __, ___) =>
+          Icon(Icons.map_rounded, size: size, color: _blue),
+    );
+  }
+
 
   void _updateNavigationCamera(Position pos, {bool force = false}) {
     if (!_navigationMode || _map == null) return;
@@ -1333,6 +1415,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
               Row(
                 children: [
                   Expanded(
+                    flex: 3,
                     child: TextButton(
                       onPressed: _toggleNavigation,
                       child: Text(
@@ -1352,6 +1435,37 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
                     color: const Color(0xFFF0F2F5),
                   ),
                   Expanded(
+                    flex: 4,
+                    child: TextButton(
+                      onPressed: () => _openGoogleMaps(job),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _googleMapsLogo(size: 18),
+                          const SizedBox(width: 6),
+                          const Flexible(
+                            child: Text(
+                              'Google Maps',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: _text,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Container(
+                    width: 1,
+                    height: 22,
+                    color: const Color(0xFFF0F2F5),
+                  ),
+                  Expanded(
+                    flex: 3,
                     child: TextButton(
                       onPressed: () => _showDetail(job),
                       child: Text(
@@ -1516,7 +1630,6 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
   }
 
   void _showDetail(_Destination job) {
-
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -1573,7 +1686,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
                   if (job.distance != null)
                     Text(
                       job.distance!,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
                         color: _blue,
@@ -1641,8 +1754,6 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
   }
 
   Widget _avatarFallback(double size, bool isStore) {
-
-
     return Container(
       width: size,
       height: size,
