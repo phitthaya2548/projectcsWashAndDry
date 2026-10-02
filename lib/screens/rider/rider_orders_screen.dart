@@ -69,7 +69,7 @@ const _statusSteps = <String, _StatusStep>{
     successMessage: 'ส่งผ้าเข้ารอการคำนวณเรียบร้อยแล้ว',
   ),
   _S.deliveryHeadingToShop: _StatusStep(
-    label: 'กำลังไปที่ร้าน (รับผ้ากลับ)',
+    label: 'กำลังไปที่ร้าน',
     buttonLabel: 'รับผ้าที่ร้านแล้ว',
     successMessage: 'รับผ้าที่ร้านเรียบร้อยแล้ว',
     nextStatus: _S.deliveryPickupCompleted,

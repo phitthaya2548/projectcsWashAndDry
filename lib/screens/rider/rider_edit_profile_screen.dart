@@ -564,58 +564,47 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
                   ),
                   const SizedBox(height: 14),
 
-                  // ---- Vehicle info ----
-                  _sectionCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _titleSmall('ข้อมูลยานพาหนะ'),
-                        const SizedBox(height: 14),
-                        DropdownButtonFormField<String>(
-                          value: _vehicleType,
-                          decoration: _inputDecoration(
-                            label: 'ประเภทรถ',
-                            icon: Icons.directions_bike_outlined,
-                          ),
-                          items: _vehicleTypes.map((type) {
-                            final vehicleIcon = (type == 'มอเตอร์ไซค์' ||
-                                    type == 'จักรยานยนต์')
-                                ? Icons.two_wheeler
-                                : Icons.directions_car;
-                            return DropdownMenuItem(
-                              value: type,
-                              child: Row(
-                                children: [
-                                  Icon(vehicleIcon,
-                                      size: 20, color: _textSub),
-                                  const SizedBox(width: 10),
-                                  Text(type),
-                                ],
-                              ),
-                            );
-                          }).toList(),
-                          onChanged: (value) {
-                            if (value != null) {
-                              setState(() => _vehicleType = value);
-                            }
-                          },
-                        ),
-                        const SizedBox(height: 14),
-                        TextFormField(
-                          controller: _controllers['licensePlate'],
-                          decoration: _inputDecoration(
-                            label: 'ทะเบียนรถ',
-                            icon: Icons.credit_card_outlined,
-                          ),
-                          validator: (v) =>
-                              v!.trim().isEmpty ? 'กรุณากรอกทะเบียนรถ' : null,
-                        ),
-                      ],
-                    ),
-                  ),
+                  DropdownButtonFormField<String>(
+  value: _vehicleType,
+  decoration: _inputDecoration(
+    label: 'ประเภทรถ',
+    icon: (_vehicleType == 'มอเตอร์ไซค์' ||
+            _vehicleType == 'จักรยานยนต์')
+        ? Icons.two_wheeler
+        : Icons.directions_car,
+  ),
+  items: _vehicleTypes.map((type) {
+    final vehicleIcon = (type == 'มอเตอร์ไซค์' ||
+            type == 'จักรยานยนต์')
+        ? Icons.two_wheeler
+        : Icons.directions_car;
+
+    return DropdownMenuItem<String>(
+      value: type,
+      child: Row(
+        children: [
+          Icon(
+            vehicleIcon,
+            size: 20,
+            color: _textSub,
+          ),
+          const SizedBox(width: 10),
+          Text(type),
+        ],
+      ),
+    );
+  }).toList(),
+  onChanged: (value) {
+    if (value != null) {
+      setState(() {
+        _vehicleType = value;
+      });
+    }
+  },
+),
                   const SizedBox(height: 20),
 
-                  // ---- Submit button ----
+
                   Container(
                     height: 54,
                     decoration: BoxDecoration(

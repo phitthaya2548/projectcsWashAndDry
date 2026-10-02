@@ -34,21 +34,29 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
     'delivery_in_progress',
   };
 
+  // สถานะที่ให้วาดเส้นทางไปร้าน
+  static const _toStoreStatuses = {
+    'pickup_completed', // กำลังนำผ้าไปที่ร้าน
+    'delivery_heading_to_shop', // กำลังไปที่ร้าน
+  };
+
   GoogleMapController? _map;
   StreamSubscription<DocumentSnapshot>? _orderSub, _riderSub;
 
   final Set<Marker> _markers = {};
   final Set<Polyline> _polylines = {};
+  final Map<String, Map<String, dynamic>> _storeCache = {};
 
   String _status = '', _riderName = '', _address = '';
   String? _riderId, _riderImage, _phone, _vehicle, _plate;
   String? _distance, _duration, _customerImage, _error;
-  String? _apiUrl, _storeName, _storeAddress, _storeImage;
+  String? _apiUrl, _storeId, _storeName, _storeAddress, _storeImage;
 
   LatLng? _riderPos, _destPos, _storePos;
   BitmapDescriptor? _riderIcon, _destIcon, _storeIcon;
 
   bool _loading = true;
+  bool _fetchingStore = false;
   int _trackingVersion = 0, _routeVersion = 0;
 
   @override
@@ -65,6 +73,14 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
     _riderSub?.cancel();
     _map?.dispose();
     super.dispose();
+  }
+
+  /// ปลายทางของเส้นทางตามสถานะปัจจุบัน
+  LatLng? get _routeTarget {
+    if (_toStoreStatuses.contains(_status) && _storePos != null) {
+      return _storePos;
+    }
+    return _destPos;
   }
 
   Future<void> _init() async {
@@ -136,53 +152,67 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
     return null;
   }
 
-  Future<void> _loadStore(Map<String, dynamic> data) async {
-    final storeId = _refId(data['store_id']);
-    if (storeId == null) return;
+  Future<Map<String, dynamic>?> _fetchStore(String storeId) async {
+    final cached = _storeCache[storeId];
+    if (cached != null) return cached;
 
     final base = _apiUrl;
-    if (base == null || base.isEmpty) return;
+    if (base == null || base.isEmpty) return null;
 
     try {
       final res = await http
           .get(Uri.parse('$base/order/rider/store/address/$storeId'))
           .timeout(const Duration(seconds: 10));
 
-      if (res.statusCode != 200) return;
+      if (res.statusCode != 200) return null;
 
       final body = jsonDecode(res.body) as Map<String, dynamic>;
-      if (body['ok'] != true) return;
+      if (body['ok'] != true) return null;
 
-      final store = body['data'] as Map<String, dynamic>?;
-      if (store == null) return;
+      final data = body['data'] as Map<String, dynamic>?;
+      if (data == null) return null;
 
-      final lat = (store['latitude'] as num?)?.toDouble();
-      final lng = (store['longitude'] as num?)?.toDouble();
-      if (lat == null || lng == null) return;
+      _storeCache[storeId] = data;
+      return data;
+    } catch (_) {
+      return null;
+    }
+  }
 
-      _storePos = LatLng(lat, lng);
-      _storeName = store['store_name']?.toString() ?? 'ร้านค้า';
-      _storeAddress = store['address']?.toString();
-      _storeImage = store['image']?.toString();
-      _storeIcon = await _makeMarker(_storeImage, _orange);
+  Future<void> _loadStore(Map<String, dynamic> data) async {
+    final storeId = _refId(data['store_id']);
+    if (storeId == null) return;
+    _storeId = storeId;
 
-      if (!mounted) return;
+    final store = await _fetchStore(storeId);
+    if (store == null) return;
 
-      setState(() {
-        _markers
-          ..removeWhere((m) => m.markerId.value == 'store')
-          ..add(Marker(
-            markerId: const MarkerId('store'),
-            position: _storePos!,
-            icon: _storeIcon ??
-                BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
-            infoWindow: InfoWindow(
-              title: 'ร้าน $_storeName',
-              snippet: _storeAddress?.isNotEmpty == true ? _storeAddress : _storeName,
-            ),
-          ));
-      });
-    } catch (_) {}
+    final lat = (store['latitude'] as num?)?.toDouble();
+    final lng = (store['longitude'] as num?)?.toDouble();
+    if (lat == null || lng == null) return;
+
+    _storePos = LatLng(lat, lng);
+    _storeName = store['store_name']?.toString() ?? 'ร้านค้า';
+    _storeAddress = store['address']?.toString();
+    _storeImage = store['image']?.toString();
+    _storeIcon ??= await _makeMarker(_storeImage, _orange);
+
+    if (!mounted) return;
+
+    setState(() {
+      _markers
+        ..removeWhere((m) => m.markerId.value == 'store')
+        ..add(Marker(
+          markerId: const MarkerId('store'),
+          position: _storePos!,
+          icon: _storeIcon ??
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+          infoWindow: InfoWindow(
+            title: 'ร้าน $_storeName',
+            snippet: _storeAddress?.isNotEmpty == true ? _storeAddress : _storeName,
+          ),
+        ));
+    });
   }
 
   DocumentReference? _activeRider(Map<String, dynamic> data) {
@@ -252,7 +282,11 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
     if (newStatus == _status) return;
 
     setState(() => _status = newStatus);
-    _setupRider(data);
+
+    // ตั้งค่าไรเดอร์ใหม่ แล้ววาดเส้นทางทันทีตามสถานะใหม่
+    _setupRider(data).then((_) {
+      if (mounted) _updateRoute();
+    });
   }
 
   void _clearRider() {
@@ -310,10 +344,30 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
         ));
     });
 
-    if (_destPos != null) {
-      _drawRoute(pos, _destPos!);
-      _fitBounds([pos, _destPos!, if (_storePos != null) _storePos!]);
+    _updateRoute();
+  }
+
+  /// วาดเส้นทางจากไรเดอร์ไปยังปลายทางตามสถานะ (ร้าน หรือ ลูกค้า)
+  Future<void> _updateRoute() async {
+    // ต้องไปร้านแต่ยังไม่มีพิกัดร้าน -> ลองดึงใหม่ (กันยิงซ้ำด้วย flag)
+    if (_toStoreStatuses.contains(_status) &&
+        _storePos == null &&
+        _storeId != null &&
+        !_fetchingStore) {
+      _fetchingStore = true;
+      try {
+        await _loadStore({'store_id': _storeId});
+      } finally {
+        _fetchingStore = false;
+      }
     }
+
+    final from = _riderPos;
+    final to = _routeTarget;
+    if (from == null || to == null || !mounted) return;
+
+    _drawRoute(from, to);
+    _fitBounds([from, to]);
   }
 
   Future<void> _drawRoute(LatLng from, LatLng to) async {
@@ -395,7 +449,6 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
   }
 
   Future<BitmapDescriptor> _makeMarker(String? imageUrl, Color color) async {
-    const size = 120.0;
     const radius = 54.0;
 
     final recorder = ui.PictureRecorder();
@@ -557,8 +610,9 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
           mapToolbarEnabled: false,
           onMapCreated: (c) {
             _map = c;
-            if (_riderPos != null && _destPos != null) {
-              _fitBounds([_riderPos!, _destPos!, if (_storePos != null) _storePos!]);
+            final target = _routeTarget;
+            if (_riderPos != null && target != null) {
+              _fitBounds([_riderPos!, target]);
             } else if (_storePos != null) {
               c.animateCamera(CameraUpdate.newLatLngZoom(_storePos!, 15));
             } else if (_destPos != null) {
