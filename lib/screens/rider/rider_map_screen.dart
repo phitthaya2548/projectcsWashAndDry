@@ -9,29 +9,39 @@ import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
+import 'package:wash_and_dry/config/config.dart';
 import 'package:wash_and_dry/service/session_service.dart';
 import 'package:wash_and_dry/widgets/appbarrider.dart';
 
-class _OrderDest {
+enum _DestType { customer, store }
+
+class _Destination {
+  final String name;
   final String address;
   final double lat;
   final double lng;
-  final String name;
   final String? image;
   final String? phone;
   final String? note;
+  final _DestType type;
+
   String? distance;
   String? duration;
 
-  _OrderDest({
+  _Destination({
+    required this.name,
     required this.address,
     required this.lat,
     required this.lng,
-    required this.name,
+    required this.type,
     this.image,
     this.phone,
     this.note,
   });
+
+  bool get isStore => type == _DestType.store;
+
+  LatLng get position => LatLng(lat, lng);
 }
 
 class RiderMapScreen extends StatefulWidget {
@@ -56,12 +66,12 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     'store_pickup_in_progress',
   ];
 
-  // เขียนตำแหน่งไรเดอร์ขึ้น Firestore ไม่ถี่กว่านี้ (กัน quota/แบตเตอรี่หมดเปลือง)
   static const _minPositionWriteInterval = Duration(seconds: 4);
 
   String _riderName = '';
   String? _riderImage;
   String? _riderId;
+  String? _apiUrl;
 
   GoogleMapController? _map;
   LatLng? _myPos;
@@ -70,13 +80,14 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
   final _markers = <Marker>{};
   final _polylines = <Polyline>{};
-  final _jobs = <String, _OrderDest>{};
-  final _pickupJobs = <String, _OrderDest>{};
-  final _deliveryJobs = <String, _OrderDest>{};
-  final _routeCache = <String, List<LatLng>>{};
 
-  // cache ไอคอน marker ต่อ job แยกจาก marker set หลัก เพื่อไม่ต้องโหลดรูปซ้ำ
-  // ทุกครั้งที่ _rebuildMap() ทำงาน (เดิมโหลดรูปลูกค้าใหม่ทุกครั้งที่ตำแหน่งไรเดอร์ขยับ)
+  final _jobs = <String, _Destination>{};
+  final _pickupJobs = <String, _Destination>{};
+  final _deliveryJobs = <String, _Destination>{};
+
+  final _routeCache = <String, List<LatLng>>{};
+  final _storeCache = <String, Map<String, dynamic>>{};
+
   final _jobMarkerIcons = <String, BitmapDescriptor>{};
   final _jobIconsLoading = <String>{};
 
@@ -105,7 +116,6 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
   int _pickupVersion = 0;
   int _deliveryVersion = 0;
-
   int? _lastRouteIndex;
 
   @override
@@ -127,6 +137,10 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
   Future<void> _init() async {
     final session = Session();
+    final config = await Configuration.getConfig();
+
+    _apiUrl = config['apiEndpoint']?.toString() ?? '';
+
     final riderId = await session.getRiderId();
 
     if (!mounted) return;
@@ -216,18 +230,14 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
           position: pos,
           anchor: const Offset(0.5, 0.5),
           icon: _riderMarker ??
-              BitmapDescriptor.defaultMarkerWithHue(
-                BitmapDescriptor.hueBlue,
-              ),
+              BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
         ),
       );
   }
 
   Future<void> _startGps(String riderId) async {
     if (!await Geolocator.isLocationServiceEnabled()) {
-      if (mounted) {
-        setState(() => _gpsWarning = 'กรุณาเปิด GPS');
-      }
+      if (mounted) setState(() => _gpsWarning = 'กรุณาเปิด GPS');
       return;
     }
 
@@ -239,9 +249,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
     if (permission == LocationPermission.denied ||
         permission == LocationPermission.deniedForever) {
-      if (mounted) {
-        setState(() => _gpsWarning = 'ไม่ได้รับอนุญาตให้ใช้ตำแหน่ง');
-      }
+      if (mounted) setState(() => _gpsWarning = 'ไม่ได้รับอนุญาตให้ใช้ตำแหน่ง');
       return;
     }
 
@@ -259,9 +267,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
         final current = LatLng(pos.latitude, pos.longitude);
 
-        if (pos.heading.isFinite &&
-            pos.heading >= 0 &&
-            pos.heading <= 360) {
+        if (pos.heading.isFinite && pos.heading >= 0 && pos.heading <= 360) {
           _gpsHeading = pos.heading;
         }
 
@@ -277,7 +283,6 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
         }
 
         _writeRiderPosition(riderId, pos);
-
         _refreshSelectedRouteIfNeeded(current);
 
         if (_navigationMode) {
@@ -285,15 +290,11 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
         }
       },
       onError: (_) {
-        if (mounted) {
-          setState(() => _gpsWarning = 'สัญญาณ GPS ขาดหาย');
-        }
+        if (mounted) setState(() => _gpsWarning = 'สัญญาณ GPS ขาดหาย');
       },
     );
   }
 
-  /// เขียนตำแหน่งไรเดอร์ขึ้น Firestore แบบ throttle
-  /// (เดิมเขียนทุกครั้งที่ stream ยิง event ซึ่งอาจถี่มากตาม distanceFilter)
   void _writeRiderPosition(String riderId, Position pos) {
     final now = DateTime.now();
 
@@ -327,24 +328,21 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
       _bearing = _smoothBearing(_bearing, heading, 0.20);
 
-      if (_navigationMode) {
-        if (gps != null) {
-          _updateNavigationCamera(gps);
-        } else if (_myPos != null) {
-          final target = _navBearing(_myPos!);
-          _bearing = _smoothBearing(_bearing, target, 0.20);
+      if (!_navigationMode) return;
 
-          // ล็อกไรเดอร์ไว้กลางจอเป๊ะๆ เสมอ (ไม่ใช้ look-ahead offset)
-          _animateNavCamera(
-            CameraPosition(
-              target: _myPos!,
-              zoom: 18.0,
-              tilt: 0,
-              bearing: _bearing,
-            ),
-          );
-        }
+      if (gps != null) {
+        _updateNavigationCamera(gps);
+        return;
       }
+
+      final me = _myPos;
+      if (me == null) return;
+
+      _bearing = _smoothBearing(_bearing, _navBearing(me), 0.20);
+
+      _animateNavCamera(
+        CameraPosition(target: me, zoom: 18.0, tilt: 0, bearing: _bearing),
+      );
     });
   }
 
@@ -357,26 +355,19 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
         .where('rider_pickup_id', isEqualTo: riderRef)
         .where('status', whereIn: _activeStatuses)
         .snapshots()
-        .listen((snap) {
-      _loadJobs(
-        snap,
-        pickup: true,
-        version: ++_pickupVersion,
-      );
-    });
+        .listen(
+          (snap) => _loadJobs(snap, pickup: true, version: ++_pickupVersion),
+        );
 
     _deliverySub = FirebaseFirestore.instance
         .collection('orders')
         .where('rider_delivery_id', isEqualTo: riderRef)
         .where('status', whereIn: _activeStatuses)
         .snapshots()
-        .listen((snap) {
-      _loadJobs(
-        snap,
-        pickup: false,
-        version: ++_deliveryVersion,
-      );
-    });
+        .listen(
+          (snap) =>
+              _loadJobs(snap, pickup: false, version: ++_deliveryVersion),
+        );
   }
 
   Future<void> _loadJobs(
@@ -384,34 +375,24 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     required bool pickup,
     required int version,
   }) async {
-    final result = <String, _OrderDest>{};
+    final result = <String, _Destination>{};
 
     for (final doc in snap.docs) {
       try {
         final order = doc.data() as Map<String, dynamic>;
-        final addressRef = order['address_id'];
 
-        if (addressRef is! DocumentReference) continue;
+        final customerDest = await _buildCustomerDest(order);
+        if (customerDest != null) {
+          result[doc.id] = customerDest;
+        }
 
-        final addressSnap = await addressRef.get();
-        final address = addressSnap.data() as Map<String, dynamic>?;
-
-        final lat = (address?['latitude'] as num?)?.toDouble();
-        final lng = (address?['longitude'] as num?)?.toDouble();
-
-        if (lat == null || lng == null) continue;
-
-        final customer = await _fetchCustomer(order['customer_id']);
-
-        result[doc.id] = _OrderDest(
-          address: address?['address_text']?.toString() ?? 'ปลายทาง',
-          lat: lat,
-          lng: lng,
-          name: customer.$1,
-          image: customer.$2,
-          phone: customer.$3,
-          note: order['note']?.toString(),
-        );
+        final storeId = _refId(order['store_id']);
+        if (storeId != null && !result.containsKey('store_$storeId')) {
+          final storeDest = await _buildStoreDest(storeId);
+          if (storeDest != null) {
+            result['store_$storeId'] = storeDest;
+          }
+        }
       } catch (_) {}
     }
 
@@ -434,7 +415,6 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
       ..addAll(_deliveryJobs);
 
     _routeCache.removeWhere((id, _) => !_jobs.containsKey(id));
-    // เคลียร์ icon cache ของ job ที่หายไปด้วย ไม่งั้น memory จะค่อยๆโตขึ้นเรื่อยๆ
     _jobMarkerIcons.removeWhere((id, _) => !_jobs.containsKey(id));
 
     if (_selectedJobId == null || !_jobs.containsKey(_selectedJobId)) {
@@ -447,6 +427,87 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
     setState(() {});
     _rebuildMap();
+  }
+
+  Future<_Destination?> _buildCustomerDest(Map<String, dynamic> order) async {
+    final addressRef = order['address_id'];
+    if (addressRef is! DocumentReference) return null;
+
+    final addressSnap = await addressRef.get();
+    final address = addressSnap.data() as Map<String, dynamic>?;
+
+    final lat = (address?['latitude'] as num?)?.toDouble();
+    final lng = (address?['longitude'] as num?)?.toDouble();
+
+    if (lat == null || lng == null) return null;
+
+    final customer = await _fetchCustomer(order['customer_id']);
+
+    return _Destination(
+      name: customer.$1,
+      address: address?['address_text']?.toString() ?? 'ปลายทาง',
+      lat: lat,
+      lng: lng,
+      image: customer.$2,
+      phone: customer.$3,
+      note: order['note']?.toString(),
+      type: _DestType.customer,
+    );
+  }
+
+  Future<_Destination?> _buildStoreDest(String storeId) async {
+    final store = await _fetchStore(storeId);
+    if (store == null) return null;
+
+    final lat = (store['latitude'] as num?)?.toDouble();
+    final lng = (store['longitude'] as num?)?.toDouble();
+
+    if (lat == null || lng == null) return null;
+
+    final name = store['store_name']?.toString() ?? 'ร้านค้า';
+    final address = store['address']?.toString();
+
+    return _Destination(
+      name: name,
+      address: address?.isNotEmpty == true ? address! : name,
+      lat: lat,
+      lng: lng,
+      image: store['image']?.toString(),
+      type: _DestType.store,
+    );
+  }
+
+  String? _refId(dynamic value) {
+    if (value is DocumentReference) return value.id;
+    if (value is String && value.trim().isNotEmpty) return value.trim();
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> _fetchStore(String storeId) async {
+    final cached = _storeCache[storeId];
+    if (cached != null) return cached;
+
+    final base = _apiUrl;
+    if (base == null || base.isEmpty) return null;
+
+    try {
+      final res = await http
+          .get(Uri.parse('$base/order/rider/store/address/$storeId'))
+          .timeout(const Duration(seconds: 10));
+
+      if (res.statusCode != 200) return null;
+
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      if (body['ok'] != true) return null;
+
+      final data = body['data'] as Map<String, dynamic>?;
+      if (data == null) return null;
+
+      _storeCache[storeId] = data;
+      return data;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<(String, String?, String?)> _fetchCustomer(dynamic value) async {
@@ -477,8 +538,6 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
   void _rebuildMap() {
     if (_myPos == null) return;
 
-    // เก็บ marker ของ job ที่ยังมีอยู่ (ใช้ icon จาก cache ถ้ามีแล้ว)
-    // ไม่ลบแล้วสร้างใหม่ทุกครั้งเหมือนเดิม เพื่อลดการกระพริบและงานซ้ำ
     _markers.removeWhere((m) =>
         m.markerId.value != 'rider' &&
         !_jobs.keys.any((id) => 'job_$id' == m.markerId.value));
@@ -489,7 +548,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
       final id = entry.key;
       final job = entry.value;
 
-      _addCustomerMarker(id, job);
+      _addJobMarker(id, job);
 
       if (id == _selectedJobId) {
         _drawCachedRoute(id);
@@ -499,8 +558,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     }
   }
 
-  Future<void> _addCustomerMarker(String id, _OrderDest job) async {
-    // ถ้ามี icon ใน cache แล้ว ใช้ทันทีโดยไม่ต้องดาวน์โหลดรูปซ้ำ
+  Future<void> _addJobMarker(String id, _Destination job) async {
     final cachedIcon = _jobMarkerIcons[id];
 
     if (cachedIcon != null) {
@@ -508,12 +566,11 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
       return;
     }
 
-    // กันเรียกซ้อนหลายครั้งพร้อมกันสำหรับ job เดียวกัน
     if (_jobIconsLoading.contains(id)) return;
     _jobIconsLoading.add(id);
 
     try {
-      final icon = await _makeMarker(job.image);
+      final icon = await _makeMarker(job.image, isStore: job.isStore);
       _jobMarkerIcons[id] = icon;
 
       if (!mounted || !_jobs.containsKey(id)) return;
@@ -524,18 +581,18 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     }
   }
 
-  void _upsertJobMarker(String id, _OrderDest job, BitmapDescriptor icon) {
+  void _upsertJobMarker(String id, _Destination job, BitmapDescriptor icon) {
     setState(() {
       _markers
         ..removeWhere((m) => m.markerId.value == 'job_$id')
         ..add(
           Marker(
             markerId: MarkerId('job_$id'),
-            position: LatLng(job.lat, job.lng),
+            position: job.position,
             icon: icon,
             onTap: () => _selectJob(id),
             infoWindow: InfoWindow(
-              title: job.name,
+              title: job.isStore ? 'ร้าน ${job.name}' : job.name,
               snippet: job.address,
             ),
           ),
@@ -584,7 +641,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
       );
   }
 
-  Future<void> _loadRoute(String id, _OrderDest job) async {
+  Future<void> _loadRoute(String id, _Destination job) async {
     final me = _myPos;
     if (me == null) return;
 
@@ -606,10 +663,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
       final points = (route['geometry']['coordinates'] as List)
           .map(
-            (p) => LatLng(
-              (p[1] as num).toDouble(),
-              (p[0] as num).toDouble(),
-            ),
+            (p) => LatLng((p[1] as num).toDouble(), (p[0] as num).toDouble()),
           )
           .toList();
 
@@ -644,7 +698,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     final job = _jobs[id];
     if (job == null) return;
 
-    final dest = LatLng(job.lat, job.lng);
+    final dest = job.position;
 
     _programmaticMove = true;
 
@@ -670,40 +724,33 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
     setState(() => _navigationMode = !_navigationMode);
 
-    if (_navigationMode) {
-      _lastRouteIndex = null;
-      _lastNavCameraUpdate = null;
-
-      final rider = _gpsPosition != null
-          ? LatLng(_gpsPosition!.latitude, _gpsPosition!.longitude)
-          : _myPos!;
-
-      final initialBearing = _navBearing(rider);
-      _bearing = initialBearing;
-
-      final pos = _gpsPosition;
-      if (pos != null) {
-        _updateNavigationCamera(pos, force: true);
-      } else {
-        // ล็อกไรเดอร์ไว้กลางจอเป๊ะๆ เสมอ (ไม่ใช้ look-ahead offset)
-        _animateNavCamera(
-          CameraPosition(
-            target: rider,
-            zoom: 18.0,
-            tilt: 0,
-            bearing: _bearing,
-          ),
-        );
-      }
-    } else {
+    if (!_navigationMode) {
       _focusJob();
+      return;
     }
+
+    _lastRouteIndex = null;
+    _lastNavCameraUpdate = null;
+
+    final rider = _gpsPosition != null
+        ? LatLng(_gpsPosition!.latitude, _gpsPosition!.longitude)
+        : _myPos!;
+
+    _bearing = _navBearing(rider);
+
+    final pos = _gpsPosition;
+
+    if (pos != null) {
+      _updateNavigationCamera(pos, force: true);
+      return;
+    }
+
+    _animateNavCamera(
+      CameraPosition(target: rider, zoom: 18.0, tilt: 0, bearing: _bearing),
+    );
   }
 
-  void _updateNavigationCamera(
-    Position pos, {
-    bool force = false,
-  }) {
+  void _updateNavigationCamera(Position pos, {bool force = false}) {
     if (!_navigationMode || _map == null) return;
 
     final now = DateTime.now();
@@ -726,27 +773,15 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
                 ? 17.2
                 : 16.7;
 
-    // ใช้ look-ahead แค่สำหรับ "หาทิศทาง" ที่จะหมุนกล้องตามเส้นทาง
-    // ไม่เอามาขยับ target แล้ว เพื่อให้ไรเดอร์อยู่กลางจอเป๊ะๆ เสมอ
     final directionLookAhead = (35 + speed * 3).clamp(35.0, 90.0);
     final routeDirection = _routeDirection(rider, directionLookAhead);
-
     final targetBearing = routeDirection?.$1 ?? _navBearing(rider);
-
-    // force = true คือตอนเพิ่งกดปุ่มนำทาง (หรือกดใหม่อีกครั้ง) ต้องการให้กล้อง
-    // หันไปทิศที่ถูกต้องทันที ไม่ใช่ค่อยๆ หมุนไปหาทิศทาง
-    final smoothFactor =
-        force ? 1.0 : (routeDirection != null ? 0.35 : 0.22);
+    final smoothFactor = force ? 1.0 : (routeDirection != null ? 0.35 : 0.22);
 
     _bearing = _smoothBearing(_bearing, targetBearing, smoothFactor);
 
     _animateNavCamera(
-      CameraPosition(
-        target: rider,
-        zoom: zoom,
-        tilt: 0,
-        bearing: _bearing,
-      ),
+      CameraPosition(target: rider, zoom: zoom, tilt: 0, bearing: _bearing),
     );
   }
 
@@ -758,19 +793,15 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     return _bearing;
   }
 
-  (double, LatLng)? _routeDirection(
-    LatLng rider,
-    double lookAheadMeters,
-  ) {
+  (double, LatLng)? _routeDirection(LatLng rider, double lookAheadMeters) {
     final id = _selectedJobId;
     if (id == null) return null;
 
     final points = _routeCache[id];
     if (points == null || points.length < 2) return null;
 
-    final searchStart = _lastRouteIndex == null
-        ? 0
-        : max(0, _lastRouteIndex! - 3);
+    final searchStart =
+        _lastRouteIndex == null ? 0 : max(0, _lastRouteIndex! - 3);
     final searchEnd = _lastRouteIndex == null
         ? points.length - 1
         : min(points.length - 1, _lastRouteIndex! + 60);
@@ -792,9 +823,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
       }
     }
 
-    if (nearestDistance > 120 || nearestIndex >= points.length - 1) {
-      return null;
-    }
+    if (nearestDistance > 120 || nearestIndex >= points.length - 1) return null;
 
     if (_lastRouteIndex != null && nearestIndex < _lastRouteIndex! - 2) {
       nearestIndex = _lastRouteIndex!;
@@ -816,22 +845,20 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
       targetIndex = i + 1;
 
-      if (distance >= effectiveLookAhead) {
-        break;
-      }
+      if (distance >= effectiveLookAhead) break;
     }
 
     final from = points[nearestIndex];
     var to = points[targetIndex];
 
-    if (Geolocator.distanceBetween(
-          from.latitude,
-          from.longitude,
-          to.latitude,
-          to.longitude,
-        ) <
-        8 &&
-        targetIndex < points.length - 1) {
+    final segment = Geolocator.distanceBetween(
+      from.latitude,
+      from.longitude,
+      to.latitude,
+      to.longitude,
+    );
+
+    if (segment < 8 && targetIndex < points.length - 1) {
       to = points[min(targetIndex + 3, points.length - 1)];
     }
 
@@ -858,20 +885,16 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
     controller
         .animateCamera(CameraUpdate.newCameraPosition(camera))
-        .whenComplete(() {
-          _cameraAnimating = false;
-        });
+        .whenComplete(() => _cameraAnimating = false);
   }
 
-  double _smoothBearing(
-    double current,
-    double target,
-    double factor,
-  ) {
+  double _smoothBearing(double current, double target, double factor) {
     var diff = (target - current + 540) % 360 - 180;
-    final maxStep = 18.0;
+    const maxStep = 18.0;
+
     if (diff > maxStep) diff = maxStep;
     if (diff < -maxStep) diff = -maxStep;
+
     return (current + diff * factor + 360) % 360;
   }
 
@@ -900,15 +923,19 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     _loadRoute(id, job);
   }
 
-  Future<BitmapDescriptor> _makeMarker(String? imageUrl) async {
+  Future<BitmapDescriptor> _makeMarker(
+    String? imageUrl, {
+    bool isStore = false,
+  }) async {
     const size = 110.0;
     const radius = 49.0;
 
+    final ringColor = isStore ? _blue : _blue;
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
-    final center = const Offset(size / 2, size / 2);
+    const center = Offset(size / 2, size / 2);
 
-    canvas.drawCircle(center, size / 2, Paint()..color = _blue);
+    canvas.drawCircle(center, size / 2, Paint()..color = ringColor);
 
     if (imageUrl?.isNotEmpty == true) {
       try {
@@ -927,14 +954,16 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
           canvas.save();
           canvas.clipPath(
-            Path()
-              ..addOval(
-                Rect.fromCircle(center: center, radius: radius),
-              ),
+            Path()..addOval(Rect.fromCircle(center: center, radius: radius)),
           );
           canvas.drawImageRect(
             image,
-            Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+            Rect.fromLTWH(
+              0,
+              0,
+              image.width.toDouble(),
+              image.height.toDouble(),
+            ),
             Rect.fromCircle(center: center, radius: radius),
             Paint(),
           );
@@ -948,26 +977,48 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     canvas.drawCircle(
       center,
       radius,
-      Paint()..color = const Color(0xFFEAF6FF),
+      Paint()
+        ..color =
+            isStore ? const Color(0xFFFFF1E5) : const Color(0xFFEAF6FF),
     );
 
-    final paint = Paint()..color = _blue;
-    canvas.drawCircle(
-      Offset(size / 2, size / 2 - 10),
-      15,
-      paint,
-    );
-    canvas.drawArc(
-      Rect.fromCenter(
-        center: Offset(size / 2, size / 2 + 24),
-        width: 44,
-        height: 26,
-      ),
-      0,
-      pi,
-      true,
-      paint,
-    );
+    final paint = Paint()..color = ringColor;
+
+    if (isStore) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(
+            center: const Offset(size / 2, size / 2 + 10),
+            width: 46,
+            height: 30,
+          ),
+          const Radius.circular(5),
+        ),
+        paint,
+      );
+      canvas.drawPath(
+        Path()
+          ..moveTo(size / 2 - 28, size / 2 - 6)
+          ..lineTo(size / 2 + 28, size / 2 - 6)
+          ..lineTo(size / 2 + 20, size / 2 - 22)
+          ..lineTo(size / 2 - 20, size / 2 - 22)
+          ..close(),
+        paint,
+      );
+    } else {
+      canvas.drawCircle(const Offset(size / 2, size / 2 - 10), 15, paint);
+      canvas.drawArc(
+        Rect.fromCenter(
+          center: const Offset(size / 2, size / 2 + 24),
+          width: 44,
+          height: 26,
+        ),
+        0,
+        pi,
+        true,
+        paint,
+      );
+    }
 
     return _descriptor(recorder, size);
   }
@@ -998,44 +1049,17 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
   Widget _body() {
     if (_loadingLocation && _myPos == null) {
-      return const Center(
-        child: CircularProgressIndicator(color: _blue),
-      );
+      return const Center(child: CircularProgressIndicator(color: _blue));
     }
 
     if (_locationError != null && _myPos == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(30),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _locationError!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 15, color: _subText),
-              ),
-              const SizedBox(height: 16),
-              FilledButton(
-                onPressed: _riderId == null
-                    ? null
-                    : () => _listenPosition(_riderId!),
-                style: FilledButton.styleFrom(backgroundColor: _blue),
-                child: const Text('ลองใหม่'),
-              ),
-            ],
-          ),
-        ),
-      );
+      return _errorView();
     }
 
     return Stack(
       children: [
         GoogleMap(
-          initialCameraPosition: CameraPosition(
-            target: _myPos!,
-            zoom: 14,
-          ),
+          initialCameraPosition: CameraPosition(target: _myPos!, zoom: 14),
           onMapCreated: (controller) {
             _map = controller;
             if (_selectedJobId != null) {
@@ -1047,18 +1071,13 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
               setState(() => _navigationMode = false);
             }
           },
-          onCameraIdle: () {
-            _programmaticMove = false;
-          },
+          onCameraIdle: () => _programmaticMove = false,
           markers: _markers,
           polylines: _polylines,
           myLocationEnabled: false,
           myLocationButtonEnabled: false,
           zoomControlsEnabled: false,
           mapToolbarEnabled: false,
-          // ตอนอยู่ในโหมดนำทาง ล็อกไม่ให้ลาก/ซูม/หมุน/เอียงแผนที่ด้วยมือ
-          // กันแตะจอเบาๆ แล้วกล้องขยับนิดเดียวจนหลุดโหมดนำทางเอง
-          // ถ้าจะออกจากโหมดนำทางต้องกดปุ่มนำทางเท่านั้น
           scrollGesturesEnabled: !_navigationMode,
           zoomGesturesEnabled: !_navigationMode,
           rotateGesturesEnabled: !_navigationMode,
@@ -1069,6 +1088,31 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
         if (_selectedJobId != null) _selectedCard(),
         _navigationButton(),
       ],
+    );
+  }
+
+  Widget _errorView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(30),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _locationError!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 15, color: _subText),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed:
+                  _riderId == null ? null : () => _listenPosition(_riderId!),
+              style: FilledButton.styleFrom(backgroundColor: _blue),
+              child: const Text('ลองใหม่'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1095,9 +1139,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
                 ),
               ),
               TextButton(
-                onPressed: _riderId == null
-                    ? null
-                    : () => _startGps(_riderId!),
+                onPressed: _riderId == null ? null : () => _startGps(_riderId!),
                 child: const Text('ลองใหม่'),
               ),
             ],
@@ -1133,7 +1175,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
                 ],
               ),
               child: Text(
-                'งานของฉัน  ${_jobs.length}',
+                'จุดหมายของฉัน  ${_jobs.length}',
                 style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
@@ -1169,7 +1211,9 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
             ],
           ),
           child: Icon(
-            _navigationMode ? Icons.navigation_rounded : Icons.my_location_rounded,
+            _navigationMode
+                ? Icons.navigation_rounded
+                : Icons.my_location_rounded,
             color: _navigationMode ? Colors.white : _blue,
             size: 21,
           ),
@@ -1183,6 +1227,8 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     final job = id == null ? null : _jobs[id];
 
     if (job == null) return const SizedBox.shrink();
+
+    final accent = job.isStore ? _blue : _blue;
 
     return Positioned(
       left: 12,
@@ -1209,28 +1255,41 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
             children: [
               Row(
                 children: [
-                  _avatar(job.image, 46),
+                  _avatar(job.image, 46, isStore: job.isStore),
                   const SizedBox(width: 11),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          job.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: _text,
-                          ),
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                job.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                  color: _text,
+                                ),
+                              ),
+                            ),
+                            if (job.isStore) ...[
+                              const SizedBox(width: 6),
+                              _tag('ร้าน'),
+                            ],
+                          ],
                         ),
                         const SizedBox(height: 4),
                         Text(
                           job.address,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 11.5, color: _subText),
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            color: _subText,
+                          ),
                         ),
                       ],
                     ),
@@ -1242,16 +1301,19 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
                       children: [
                         Text(
                           job.distance!,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
-                            color: _blue,
+                            color: accent,
                           ),
                         ),
                         const SizedBox(height: 2),
                         Text(
                           job.duration ?? '',
-                          style: const TextStyle(fontSize: 10.5, color: _subText),
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            color: _subText,
+                          ),
                         ),
                       ],
                     )
@@ -1276,9 +1338,10 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
                       child: Text(
                         _navigationMode ? 'หยุดนำทาง' : 'เริ่มนำทาง',
                         style: TextStyle(
-                          color: _navigationMode ? _blue : _text,
-                          fontWeight:
-                              _navigationMode ? FontWeight.w700 : FontWeight.w500,
+                          color: _navigationMode ? accent : _text,
+                          fontWeight: _navigationMode
+                              ? FontWeight.w700
+                              : FontWeight.w500,
                         ),
                       ),
                     ),
@@ -1291,10 +1354,10 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
                   Expanded(
                     child: TextButton(
                       onPressed: () => _showDetail(job),
-                      child: const Text(
+                      child: Text(
                         'รายละเอียด',
                         style: TextStyle(
-                          color: _blue,
+                          color: accent,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -1309,8 +1372,30 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     );
   }
 
+  Widget _tag(String label) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: _blue.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+          color: _blue,
+        ),
+      ),
+    );
+  }
+
   void _showJobs() {
-    final entries = _jobs.entries.toList();
+    final entries = _jobs.entries.toList()
+      ..sort((a, b) {
+        if (a.value.isStore == b.value.isStore) return 0;
+        return a.value.isStore ? -1 : 1;
+      });
 
     showModalBottomSheet(
       context: context,
@@ -1339,7 +1424,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
                 children: [
                   const Expanded(
                     child: Text(
-                      'งานของฉัน',
+                      'จุดหมายของฉัน',
                       style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w700,
@@ -1348,7 +1433,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
                     ),
                   ),
                   Text(
-                    '${entries.length} งาน',
+                    '${entries.length} จุด',
                     style: const TextStyle(fontSize: 12, color: _subText),
                   ),
                 ],
@@ -1361,30 +1446,45 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (_, index) {
                     final entry = entries[index];
-                    final selected = entry.key == _selectedJobId;
                     final job = entry.value;
+                    final selected = entry.key == _selectedJobId;
+                    final accent = job.isStore ? _blue : _blue;
 
                     return ListTile(
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 2,
                         vertical: 2,
                       ),
-                      leading: _avatar(job.image, 42),
-                      title: Text(
-                        job.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight:
-                              selected ? FontWeight.w700 : FontWeight.w600,
-                        ),
+                      leading: _avatar(job.image, 42, isStore: job.isStore),
+                      title: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              job.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: selected
+                                    ? FontWeight.w700
+                                    : FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          if (job.isStore) ...[
+                            const SizedBox(width: 6),
+                            _tag('ร้าน'),
+                          ],
+                        ],
                       ),
                       subtitle: Text(
                         job.address,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 11.5, color: _subText),
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          color: _subText,
+                        ),
                       ),
                       trailing: job.distance == null
                           ? null
@@ -1393,10 +1493,10 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
-                                color: selected ? _blue : _subText,
+                                color: selected ? accent : _subText,
                               ),
                             ),
-                      tileColor: selected ? _blue.withOpacity(0.05) : null,
+                      tileColor: selected ? accent.withOpacity(0.05) : null,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                       ),
@@ -1415,7 +1515,8 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     );
   }
 
-  void _showDetail(_OrderDest job) {
+  void _showDetail(_Destination job) {
+
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -1444,22 +1545,35 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
               const SizedBox(height: 18),
               Row(
                 children: [
-                  _avatar(job.image, 50),
+                  _avatar(job.image, 50, isStore: job.isStore),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      job.name,
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: _text,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          job.name,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            color: _text,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          job.isStore ? 'ร้านค้า' : 'ลูกค้า',
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            color: _subText,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   if (job.distance != null)
                     Text(
                       job.distance!,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
                         color: _blue,
@@ -1510,23 +1624,25 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     );
   }
 
-  Widget _avatar(String? url, double size) {
-    if (url?.isNotEmpty == true) {
+  Widget _avatar(String? imageUrl, double size, {bool isStore = false}) {
+    if (imageUrl?.isNotEmpty == true) {
       return ClipOval(
         child: Image.network(
-          url!,
+          imageUrl!,
           width: size,
           height: size,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _avatarFallback(size),
+          errorBuilder: (_, __, ___) => _avatarFallback(size, isStore),
         ),
       );
     }
 
-    return _avatarFallback(size);
+    return _avatarFallback(size, isStore);
   }
 
-  Widget _avatarFallback(double size) {
+  Widget _avatarFallback(double size, bool isStore) {
+
+
     return Container(
       width: size,
       height: size,
@@ -1534,7 +1650,11 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
         color: _blue.withOpacity(0.10),
         shape: BoxShape.circle,
       ),
-      child: const Icon(Icons.person_rounded, color: _blue, size: 22),
+      child: Icon(
+        isStore ? Icons.storefront_rounded : Icons.person_rounded,
+        color: _blue,
+        size: 22,
+      ),
     );
   }
 }

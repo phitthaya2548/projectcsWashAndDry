@@ -1,3 +1,4 @@
+
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
@@ -102,16 +103,30 @@ String _formatTs(Timestamp ts) {
       '${d.minute.toString().padLeft(2, '0')} น.';
 }
 
-double? _calcDistance(double? lat1, double? lng1, double? lat2, double? lng2) {
-  if (lat1 == null || lng1 == null || lat2 == null || lng2 == null) return null;
+double? _calcDistance(
+  double? lat1,
+  double? lng1,
+  double? lat2,
+  double? lng2,
+) {
+  if (lat1 == null || lng1 == null || lat2 == null || lng2 == null) {
+    return null;
+  }
+
   const earthRadiusKm = 6371.0;
+
   double toRad(double deg) => deg * pi / 180;
 
   final dLat = toRad(lat2 - lat1);
   final dLng = toRad(lng2 - lng1);
+
   final a =
       sin(dLat / 2) * sin(dLat / 2) +
-      cos(toRad(lat1)) * cos(toRad(lat2)) * sin(dLng / 2) * sin(dLng / 2);
+      cos(toRad(lat1)) *
+          cos(toRad(lat2)) *
+          sin(dLng / 2) *
+          sin(dLng / 2);
+
   return earthRadiusKm * 2 * atan2(sqrt(a), sqrt(1 - a));
 }
 
@@ -153,6 +168,7 @@ Widget _chip(
     ),
   );
 }
+
 String _formatOrderDateTime(DateTime? dateTime) {
   if (dateTime == null) return '-';
 
@@ -162,18 +178,26 @@ String _formatOrderDateTime(DateTime? dateTime) {
       '${d.hour.toString().padLeft(2, '0')}:'
       '${d.minute.toString().padLeft(2, '0')} น.';
 }
+
 Widget _addressRow(String text) {
   return Padding(
     padding: const EdgeInsets.only(top: 4),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.location_on_outlined, size: 14, color: _textSecondary),
+        const Icon(
+          Icons.location_on_outlined,
+          size: 14,
+          color: _textSecondary,
+        ),
         const SizedBox(width: 5),
         Expanded(
           child: Text(
             text,
-            style: const TextStyle(fontSize: 13, color: _textSecondary),
+            style: const TextStyle(
+              fontSize: 13,
+              color: _textSecondary,
+            ),
           ),
         ),
       ],
@@ -181,16 +205,20 @@ Widget _addressRow(String text) {
   );
 }
 
-Widget _customerRow(String? name, String? phone, String? profileImage) {
+Widget _customerRow(
+  String? name,
+  String? phone,
+  String? profileImage,
+) {
   if (name == null) return const SizedBox.shrink();
+
   return Row(
     children: [
       CircleAvatar(
         radius: 22,
         backgroundColor: const Color(0xFFE8F3FF),
-        backgroundImage: profileImage != null
-            ? NetworkImage(profileImage)
-            : null,
+        backgroundImage:
+            profileImage != null ? NetworkImage(profileImage) : null,
         child: profileImage == null
             ? Text(
                 name.isNotEmpty ? name[0].toUpperCase() : '?',
@@ -226,7 +254,10 @@ Widget _customerRow(String? name, String? phone, String? profileImage) {
                   const SizedBox(width: 3),
                   Text(
                     phone,
-                    style: const TextStyle(fontSize: 12, color: _textSecondary),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: _textSecondary,
+                    ),
                   ),
                 ],
               ),
@@ -237,7 +268,10 @@ Widget _customerRow(String? name, String? phone, String? profileImage) {
   );
 }
 
-Widget _cardShell({required Widget child, required Color leftColor}) {
+Widget _cardShell({
+  required Widget child,
+  required Color leftColor,
+}) {
   return Container(
     decoration: BoxDecoration(
       color: Colors.white,
@@ -265,7 +299,10 @@ Widget _cardShell({required Widget child, required Color leftColor}) {
             ),
           ),
           Expanded(
-            child: Padding(padding: const EdgeInsets.all(14), child: child),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: child,
+            ),
           ),
         ],
       ),
@@ -273,7 +310,11 @@ Widget _cardShell({required Widget child, required Color leftColor}) {
   );
 }
 
-Widget _emptyState(IconData icon, String label, {Widget? action}) {
+Widget _emptyState(
+  IconData icon,
+  String label, {
+  Widget? action,
+}) {
   return Center(
     child: Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -282,9 +323,15 @@ Widget _emptyState(IconData icon, String label, {Widget? action}) {
         const SizedBox(height: 12),
         Text(
           label,
-          style: const TextStyle(color: _textSecondary, fontSize: 14),
+          style: const TextStyle(
+            color: _textSecondary,
+            fontSize: 14,
+          ),
         ),
-        if (action != null) ...[const SizedBox(height: 16), action],
+        if (action != null) ...[
+          const SizedBox(height: 16),
+          action,
+        ],
       ],
     ),
   );
@@ -338,8 +385,13 @@ Widget _progressBar(String status) {
         status == _S.deliveryPickupCompleted ||
         status == _S.delivering ||
         status == _S.completed;
-    final deliveringDone = status == _S.delivering || status == _S.completed;
+
+    final deliveringDone =
+        status == _S.delivering ||
+        status == _S.completed;
+
     final finished = status == _S.completed;
+
     return Row(
       children: [
         _step('รับงาน', true),
@@ -354,8 +406,11 @@ Widget _progressBar(String status) {
   }
 
   final pickedUpDone =
-      status == _S.pickupCompleted || status == _S.arrivedAtShop;
+      status == _S.pickupCompleted ||
+      status == _S.arrivedAtShop;
+
   final arrivedDone = status == _S.arrivedAtShop;
+
   return Row(
     children: [
       _step('รับงาน', true),
@@ -371,7 +426,9 @@ Widget _progressBar(String status) {
 
 Widget _successDialog(String message) {
   return Dialog(
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(16),
+    ),
     child: Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -384,17 +441,27 @@ Widget _successDialog(String message) {
               color: Color(0xFFDCFCE7),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.check_rounded, color: _green, size: 34),
+            child: const Icon(
+              Icons.check_rounded,
+              color: _green,
+              size: 34,
+            ),
           ),
           const SizedBox(height: 16),
           const Text(
             'สำเร็จ!',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
           ),
           const SizedBox(height: 6),
           Text(
             message,
-            style: const TextStyle(fontSize: 13, color: _textSecondary),
+            style: const TextStyle(
+              fontSize: 13,
+              color: _textSecondary,
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 24),
@@ -425,15 +492,22 @@ Widget _successDialog(String message) {
 
 class RiderOrdersScreen extends StatefulWidget {
   const RiderOrdersScreen({super.key});
+
   @override
   State<RiderOrdersScreen> createState() => _RiderOrdersScreenState();
 }
 
 class _RiderOrdersScreenState extends State<RiderOrdersScreen>
     with SingleTickerProviderStateMixin {
-  late final _tabController = TabController(length: 2, vsync: this);
+  late final _tabController = TabController(
+    length: 2,
+    vsync: this,
+  );
+
   String _riderName = '';
-  String? _profileImage, _riderId, _apiUrl;
+  String? _profileImage;
+  String? _riderId;
+  String? _apiUrl;
 
   @override
   void initState() {
@@ -449,6 +523,7 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen>
 
   Future<void> _loadRiderInfo() async {
     final session = Session();
+
     final results = await Future.wait([
       session.getFullname(),
       session.getProfileImage(),
@@ -457,7 +532,9 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen>
           .then((c) => c['apiEndpoint']?.toString() ?? '')
           .catchError((_) => ''),
     ]);
+
     if (!mounted) return;
+
     setState(() {
       _riderName = (results[0] as String?) ?? 'Rider';
       _profileImage = results[1] as String?;
@@ -468,7 +545,10 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen>
 
   @override
   Widget build(BuildContext context) {
-    final ready = _riderId != null && (_apiUrl?.isNotEmpty ?? false);
+    final ready =
+        _riderId != null &&
+        (_apiUrl?.isNotEmpty ?? false);
+
     return Scaffold(
       backgroundColor: _surface,
       appBar: AppBarRider(
@@ -492,7 +572,7 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen>
               indicatorSize: TabBarIndicatorSize.tab,
               tabs: const [
                 Tab(text: 'กำลังดำเนินการ'),
-                Tab(text: 'เสร็จสิ้น'),
+                Tab(text: 'งานที่ทำเสร็จแล้ว'),
               ],
             ),
           ),
@@ -501,13 +581,20 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen>
               controller: _tabController,
               children: ready
                   ? [
-                      _ActiveTab(riderId: _riderId!, apiUrl: _apiUrl!),
-                      _CompletedTab(riderId: _riderId!),
+                      _ActiveTab(
+                        riderId: _riderId!,
+                        apiUrl: _apiUrl!,
+                      ),
+                      _CompletedTab(
+                        riderId: _riderId!,
+                      ),
                     ]
                   : List.generate(
                       2,
                       (_) => const Center(
-                        child: CircularProgressIndicator(color: _blue),
+                        child: CircularProgressIndicator(
+                          color: _blue,
+                        ),
                       ),
                     ),
             ),
@@ -520,24 +607,41 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen>
 
 class _CompletedTab extends StatelessWidget {
   final String riderId;
-  const _CompletedTab({required this.riderId});
+
+  const _CompletedTab({
+    required this.riderId,
+  });
 
   Future<Map<String, DocumentSnapshot>> _batchGet(
     List<DocumentReference?> refs,
   ) async {
     final validRefs = refs.whereType<DocumentReference>().toList();
+
     if (validRefs.isEmpty) return {};
-    final snapshots = await Future.wait(validRefs.map((ref) => ref.get()));
-    return {for (final snap in snapshots) snap.reference.path: snap};
+
+    final snapshots = await Future.wait(
+      validRefs.map((ref) => ref.get()),
+    );
+
+    return {
+      for (final snap in snapshots)
+        snap.reference.path: snap,
+    };
   }
 
   @override
   Widget build(BuildContext context) {
+    final riderRef = FirebaseFirestore.instance.doc(
+      'riders/$riderId',
+    );
+
     final ordersStream = FirebaseFirestore.instance
         .collection('orders')
         .where(
-          'rider_pickup_id',
-          isEqualTo: FirebaseFirestore.instance.doc('riders/$riderId'),
+          Filter.or(
+            Filter('rider_pickup_id', isEqualTo: riderRef),
+            Filter('rider_delivery_id', isEqualTo: riderRef),
+          ),
         )
         .where(
           'status',
@@ -548,30 +652,52 @@ class _CompletedTab extends StatelessWidget {
             _S.completed,
           ],
         )
-        .orderBy('order_datetime', descending: true)
+        .orderBy(
+          'order_datetime',
+          descending: true,
+        )
         .snapshots();
 
     return StreamBuilder<QuerySnapshot>(
       stream: ordersStream,
       builder: (_, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator(color: _blue));
+        if (snapshot.connectionState ==
+            ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(
+              color: _blue,
+            ),
+          );
         }
-        if (snapshot.hasError)
-          return _emptyState(Icons.error_outline, 'เกิดข้อผิดพลาด');
+
+        if (snapshot.hasError) {
+          return _emptyState(
+            Icons.error_outline,
+            'เกิดข้อผิดพลาด',
+          );
+        }
 
         final docs = snapshot.data?.docs ?? [];
-        if (docs.isEmpty)
+
+        if (docs.isEmpty) {
           return _emptyState(
             Icons.inbox_outlined,
-            'ยังไม่มีออเดอร์ที่เสร็จสิ้น',
+            'ยังไม่มีงานที่ทำเสร็จแล้ว',
           );
+        }
 
         final customerRefs = docs
-            .map((d) => (d.data() as Map)['customer_id'] as DocumentReference?)
+            .map(
+              (d) => (d.data() as Map)['customer_id']
+                  as DocumentReference?,
+            )
             .toList();
+
         final addressRefs = docs
-            .map((d) => (d.data() as Map)['address_id'] as DocumentReference?)
+            .map(
+              (d) => (d.data() as Map)['address_id']
+                  as DocumentReference?,
+            )
             .toList();
 
         return FutureBuilder(
@@ -581,16 +707,24 @@ class _CompletedTab extends StatelessWidget {
           ]),
           builder: (_, related) {
             final customers =
-                related.data?[0] as Map<String, DocumentSnapshot>? ?? {};
+                related.data?[0]
+                    as Map<String, DocumentSnapshot>? ??
+                {};
+
             final addresses =
-                related.data?[1] as Map<String, DocumentSnapshot>? ?? {};
+                related.data?[1]
+                    as Map<String, DocumentSnapshot>? ??
+                {};
+
             final loadingRelated =
-                related.connectionState == ConnectionState.waiting;
+                related.connectionState ==
+                ConnectionState.waiting;
 
             return ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: docs.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 10),
+              separatorBuilder: (_, __) =>
+                  const SizedBox(height: 10),
               itemBuilder: (_, i) => _buildOrderCard(
                 docs[i],
                 customers,
@@ -612,23 +746,37 @@ class _CompletedTab extends StatelessWidget {
   ) {
     final data = doc.data() as Map<String, dynamic>;
     final status = data['status'] as String?;
+
     final isArrived = status == _S.arrivedAtShop;
-    final isWaiting = status == _S.waitingWash || status == _S.waitingDry;
-    final color = isArrived || isWaiting ? _blue : _green;
+    final isWaiting =
+        status == _S.waitingWash ||
+        status == _S.waitingDry;
+
+    final color =
+        isArrived || isWaiting ? _blue : _green;
+
     final label = isArrived
         ? 'ถึงร้านแล้ว'
         : (isWaiting ? 'รอซัก' : 'เสร็จสิ้น');
+
     final shortId = doc.id
         .substring(0, doc.id.length.clamp(0, 8))
         .toUpperCase();
 
-    final customerRef = data['customer_id'] as DocumentReference?;
-    final addressRef = data['address_id'] as DocumentReference?;
+    final customerRef =
+        data['customer_id'] as DocumentReference?;
+
+    final addressRef =
+        data['address_id'] as DocumentReference?;
+
     final customer = customerRef != null
-        ? customers[customerRef.path]?.data() as Map<String, dynamic>?
+        ? customers[customerRef.path]?.data()
+              as Map<String, dynamic>?
         : null;
+
     final address = addressRef != null
-        ? addresses[addressRef.path]?.data() as Map<String, dynamic>?
+        ? addresses[addressRef.path]?.data()
+              as Map<String, dynamic>?
         : null;
 
     return _cardShell(
@@ -637,7 +785,8 @@ class _CompletedTab extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            mainAxisAlignment:
+                MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 '#$shortId',
@@ -655,7 +804,10 @@ class _CompletedTab extends StatelessWidget {
             const SizedBox(
               height: 20,
               child: Center(
-                child: CircularProgressIndicator(strokeWidth: 2, color: _blue),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: _blue,
+                ),
               ),
             )
           else ...[
@@ -665,15 +817,22 @@ class _CompletedTab extends StatelessWidget {
               customer?['profile_image'],
             ),
             if (address?['address_text'] != null)
-              _addressRow(address!['address_text']),
+              _addressRow(
+                address!['address_text'],
+              ),
           ],
           const SizedBox(height: 10),
-          const Divider(height: 1, color: _border),
+          const Divider(
+            height: 1,
+            color: _border,
+          ),
           const SizedBox(height: 10),
           Row(
             children: [
               _chip(
-                _serviceLabel(data['service_type'] as String?),
+                _serviceLabel(
+                  data['service_type'] as String?,
+                ),
                 _textSecondary,
                 small: true,
                 isService: true,
@@ -681,8 +840,13 @@ class _CompletedTab extends StatelessWidget {
               if (data['order_datetime'] != null) ...[
                 const SizedBox(width: 8),
                 Text(
-                  _formatTs(data['order_datetime'] as Timestamp),
-                  style: const TextStyle(fontSize: 11, color: _textSecondary),
+                  _formatTs(
+                    data['order_datetime'] as Timestamp,
+                  ),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: _textSecondary,
+                  ),
                 ),
               ],
             ],
@@ -694,8 +858,14 @@ class _CompletedTab extends StatelessWidget {
 }
 
 class _ActiveTab extends StatefulWidget {
-  final String riderId, apiUrl;
-  const _ActiveTab({required this.riderId, required this.apiUrl});
+  final String riderId;
+  final String apiUrl;
+
+  const _ActiveTab({
+    required this.riderId,
+    required this.apiUrl,
+  });
+
   @override
   State<_ActiveTab> createState() => _ActiveTabState();
 }
@@ -705,7 +875,9 @@ class _ActiveTabState extends State<_ActiveTab> {
   bool _loading = true;
   bool _fetching = false;
   String? _error;
-  double? _lat, _lng;
+  double? _lat;
+  double? _lng;
+
   final Map<String, File?> _photoByOrderId = {};
   final Map<String, bool> _uploadingByOrderId = {};
 
@@ -713,32 +885,48 @@ class _ActiveTabState extends State<_ActiveTab> {
   void initState() {
     super.initState();
     _fetchOrders();
-    _resolveLocation().then((_) {
-      if (mounted && _lat != null) _recomputeDistances();
-    });
+    _resolveLocation();
   }
 
   Future<void> _resolveLocation() async {
     try {
-      if (!await Geolocator.isLocationServiceEnabled()) return;
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        return;
+      }
+
       var permission = await Geolocator.checkPermission();
+
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
-      if (permission == LocationPermission.deniedForever) return;
 
-      final lastKnown = await Geolocator.getLastKnownPosition();
+      if (permission == LocationPermission.deniedForever) {
+        return;
+      }
+
+      final lastKnown =
+          await Geolocator.getLastKnownPosition();
+
       if (lastKnown != null) {
         _lat = lastKnown.latitude;
         _lng = lastKnown.longitude;
-        if (mounted) _recomputeDistances();
+
+        if (mounted) {
+          _recomputeDistances();
+        }
       }
 
-      final current = await Geolocator.getCurrentPosition(
+      final current =
+          await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
+
       _lat = current.latitude;
       _lng = current.longitude;
+
+      if (mounted) {
+        _recomputeDistances();
+      }
     } catch (e) {
       log('resolveLocation: $e');
     }
@@ -746,6 +934,7 @@ class _ActiveTabState extends State<_ActiveTab> {
 
   void _recomputeDistances() {
     if (_orders.isEmpty) return;
+
     setState(() {
       _orders = _orders.map((order) {
         final km = _calcDistance(
@@ -754,8 +943,11 @@ class _ActiveTabState extends State<_ActiveTab> {
           order.addressLat,
           order.addressLng,
         );
+
         return order.copyWith(
-          distanceKm: km != null ? double.parse(km.toStringAsFixed(1)) : null,
+          distanceKm: km != null
+              ? double.parse(km.toStringAsFixed(1))
+              : null,
         );
       }).toList();
     });
@@ -763,42 +955,74 @@ class _ActiveTabState extends State<_ActiveTab> {
 
   Future<void> _fetchOrders() async {
     if (_fetching) return;
+
     _fetching = true;
+
     if (!mounted) return;
+
     setState(() {
       _loading = _orders.isEmpty;
       _error = null;
     });
+
     try {
       final res = await http.get(
-        Uri.parse('${widget.apiUrl}/order/rider/${widget.riderId}'),
+        Uri.parse(
+          '${widget.apiUrl}/order/rider/${widget.riderId}',
+        ),
       );
+
       if (!mounted) return;
-      final body = jsonDecode(res.body) as Map<String, dynamic>;
+
+      final body =
+          jsonDecode(res.body) as Map<String, dynamic>;
+
       if (res.statusCode == 200 && body['ok'] == true) {
         setState(() {
           _orders = (body['data'] as List)
-              .map((e) => WorkOfRider.fromJson(e as Map<String, dynamic>))
+              .map(
+                (e) => WorkOfRider.fromJson(
+                  e as Map<String, dynamic>,
+                ),
+              )
               .toList();
         });
+
         _recomputeDistances();
       } else {
-        setState(() => _error = body['message'] as String? ?? 'ไม่พบออเดอร์');
+        setState(() {
+          _error =
+              body['message'] as String? ??
+              'ไม่พบออเดอร์';
+        });
       }
     } catch (e) {
       log('fetchOrders: $e');
-      if (mounted) setState(() => _error = 'ไม่สามารถเชื่อมต่อได้');
+
+      if (mounted) {
+        setState(() {
+          _error = 'ไม่สามารถเชื่อมต่อได้';
+        });
+      }
     } finally {
       _fetching = false;
-      if (mounted) setState(() => _loading = false);
+
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
     }
   }
 
   Future<void> _pickPhoto(String orderId) async {
-    final source = await showModalBottomSheet<ImageSource>(
+    final source =
+        await showModalBottomSheet<ImageSource>(
       context: context,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(16),
+        ),
       ),
       builder: (ctx) => SafeArea(
         child: Column(
@@ -815,34 +1039,56 @@ class _ActiveTabState extends State<_ActiveTab> {
             ),
             const SizedBox(height: 8),
             ListTile(
-              leading: const Icon(Icons.camera_alt_outlined, color: _blue),
+              leading: const Icon(
+                Icons.camera_alt_outlined,
+                color: _blue,
+              ),
               title: const Text('ถ่ายรูป'),
-              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+              onTap: () => Navigator.pop(
+                ctx,
+                ImageSource.camera,
+              ),
             ),
             ListTile(
-              leading: const Icon(Icons.photo_library_outlined, color: _blue),
+              leading: const Icon(
+                Icons.photo_library_outlined,
+                color: _blue,
+              ),
               title: const Text('เลือกจากแกลเลอรี่'),
-              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+              onTap: () => Navigator.pop(
+                ctx,
+                ImageSource.gallery,
+              ),
             ),
             const SizedBox(height: 8),
           ],
         ),
       ),
     );
+
     if (source == null) return;
+
     final picked = await ImagePicker().pickImage(
       source: source,
       imageQuality: 80,
     );
-    if (picked != null && mounted)
-      setState(() => _photoByOrderId[orderId] = File(picked.path));
+
+    if (picked != null && mounted) {
+      setState(() {
+        _photoByOrderId[orderId] = File(picked.path);
+      });
+    }
   }
 
   String _nextStatus(WorkOfRider order) {
     if (order.status == _S.arrivedAtShop) {
-      return order.serviceType == 'dry' ? _S.waitingDry : _S.waitingWash;
+      return order.serviceType == 'dry'
+          ? _S.waitingDry
+          : _S.waitingWash;
     }
-    return _statusSteps[order.status]?.nextStatus ?? _S.completed;
+
+    return _statusSteps[order.status]?.nextStatus ??
+        _S.completed;
   }
 
   Future<void> _confirmStep(WorkOfRider order) async {
@@ -860,60 +1106,95 @@ class _ActiveTabState extends State<_ActiveTab> {
       return;
     }
 
-    setState(() => _uploadingByOrderId[order.id] = true);
+    setState(() {
+      _uploadingByOrderId[order.id] = true;
+    });
+
     try {
       final nextStatus = _nextStatus(order);
-      final successMessage =
-          step?.successMessage ?? 'ส่งผ้าถึงลูกค้าเรียบร้อยแล้ว';
 
-      final request =
-          http.MultipartRequest(
-              'PUT',
-              Uri.parse(
-                '${widget.apiUrl}/order/rider/update/status/${order.id}',
-              ),
-            )
-            ..fields['status'] = nextStatus
-            ..fields['rider_id'] = widget.riderId;
+      final successMessage =
+          step?.successMessage ??
+          'ส่งผ้าถึงลูกค้าเรียบร้อยแล้ว';
+
+      final request = http.MultipartRequest(
+        'PUT',
+        Uri.parse(
+          '${widget.apiUrl}/order/rider/update/status/${order.id}',
+        ),
+      )
+        ..fields['status'] = nextStatus
+        ..fields['rider_id'] = widget.riderId;
+
       if (needsPhoto && photo != null) {
         request.files.add(
-          await http.MultipartFile.fromPath('image', photo.path),
+          await http.MultipartFile.fromPath(
+            'image',
+            photo.path,
+          ),
         );
       }
 
-      final res = await http.Response.fromStream(await request.send());
-      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final res = await http.Response.fromStream(
+        await request.send(),
+      );
+
+      final body =
+          jsonDecode(res.body) as Map<String, dynamic>;
+
       if (!mounted) return;
 
-      if (res.statusCode == 200 && body['ok'] == true) {
-        await Get.dialog<void>(_successDialog(successMessage));
+      if (res.statusCode == 200 &&
+          body['ok'] == true) {
+        await Get.dialog<void>(
+          _successDialog(successMessage),
+        );
+
         if (!mounted) return;
-        setState(() => _photoByOrderId.remove(order.id));
+
+        setState(() {
+          _photoByOrderId.remove(order.id);
+        });
+
         _fetchOrders();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(body['message'] as String? ?? 'เกิดข้อผิดพลาด'),
+            content: Text(
+              body['message'] as String? ??
+                  'เกิดข้อผิดพลาด',
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );
       }
     } catch (e) {
       log('confirmStep: $e');
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่'),
+            content: Text(
+              'ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่',
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );
       }
     } finally {
-      if (mounted) setState(() => _uploadingByOrderId.remove(order.id));
+      if (mounted) {
+        setState(() {
+          _uploadingByOrderId.remove(order.id);
+        });
+      }
     }
   }
 
-  Widget _photoBox(String orderId, File? photo, bool uploading) {
+  Widget _photoBox(
+    String orderId,
+    File? photo,
+    bool uploading,
+  ) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -927,7 +1208,9 @@ class _ActiveTabState extends State<_ActiveTab> {
         ),
         const SizedBox(height: 8),
         GestureDetector(
-          onTap: uploading ? null : () => _pickPhoto(orderId),
+          onTap: uploading
+              ? null
+              : () => _pickPhoto(orderId),
           child: photo != null
               ? _photoPreview(orderId, photo)
               : _photoPlaceholder(),
@@ -937,11 +1220,16 @@ class _ActiveTabState extends State<_ActiveTab> {
     );
   }
 
-  Widget _photoPreview(String orderId, File photo) {
+  Widget _photoPreview(
+    String orderId,
+    File photo,
+  ) {
     return Stack(
       children: [
         Container(
-          constraints: const BoxConstraints(maxHeight: 350),
+          constraints: const BoxConstraints(
+            maxHeight: 350,
+          ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(10),
             child: Image.file(
@@ -955,14 +1243,22 @@ class _ActiveTabState extends State<_ActiveTab> {
           top: 8,
           right: 8,
           child: GestureDetector(
-            onTap: () => setState(() => _photoByOrderId.remove(orderId)),
+            onTap: () {
+              setState(() {
+                _photoByOrderId.remove(orderId);
+              });
+            },
             child: Container(
               padding: const EdgeInsets.all(5),
               decoration: const BoxDecoration(
                 color: Colors.black54,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(Icons.close, color: Colors.white, size: 18),
+              child: const Icon(
+                Icons.close,
+                color: Colors.white,
+                size: 18,
+              ),
             ),
           ),
         ),
@@ -972,7 +1268,10 @@ class _ActiveTabState extends State<_ActiveTab> {
           child: GestureDetector(
             onTap: () => _pickPhoto(orderId),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 6,
+              ),
               decoration: BoxDecoration(
                 color: Colors.black54,
                 borderRadius: BorderRadius.circular(20),
@@ -980,11 +1279,18 @@ class _ActiveTabState extends State<_ActiveTab> {
               child: const Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.edit, color: Colors.white, size: 14),
+                  Icon(
+                    Icons.edit,
+                    color: Colors.white,
+                    size: 14,
+                  ),
                   SizedBox(width: 4),
                   Text(
                     'เปลี่ยนรูป',
-                    style: TextStyle(color: Colors.white, fontSize: 12),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                    ),
                   ),
                 ],
               ),
@@ -1015,7 +1321,10 @@ class _ActiveTabState extends State<_ActiveTab> {
           const SizedBox(height: 6),
           Text(
             'แตะเพื่อเพิ่มรูป',
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey.shade400,
+            ),
           ),
         ],
       ),
@@ -1024,11 +1333,19 @@ class _ActiveTabState extends State<_ActiveTab> {
 
   Widget _buildOrderCard(WorkOfRider order) {
     final step = _statusSteps[order.status];
-    final uploading = _uploadingByOrderId[order.id] ?? false;
+    final uploading =
+        _uploadingByOrderId[order.id] ?? false;
+
     final shortId = order.id
-        .substring(0, order.id.length.clamp(0, 8))
+        .substring(
+          0,
+          order.id.length.clamp(0, 8),
+        )
         .toUpperCase();
-    final statusLabel = step?.label ?? order.status;
+
+    final statusLabel =
+        step?.label ?? order.status;
+
     final distanceText = order.distanceKm != null
         ? '${order.distanceKm} กม.'
         : 'กำลังหาตำแหน่ง...';
@@ -1042,7 +1359,8 @@ class _ActiveTabState extends State<_ActiveTab> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            mainAxisAlignment:
+                MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 '#$shortId',
@@ -1061,7 +1379,8 @@ class _ActiveTabState extends State<_ActiveTab> {
             order.customer?.phone,
             order.customer?.profileImage,
           ),
-          if (order.address != null) _addressRow(order.address!),
+          if (order.address != null)
+            _addressRow(order.address!),
           if (order.orderDatetime != null) ...[
             const SizedBox(height: 4),
             Row(
@@ -1073,7 +1392,9 @@ class _ActiveTabState extends State<_ActiveTab> {
                 ),
                 const SizedBox(width: 5),
                 Text(
-                  _formatOrderDateTime(order.orderDatetime),
+                  _formatOrderDateTime(
+                    order.orderDatetime,
+                  ),
                   style: const TextStyle(
                     fontSize: 12,
                     color: _textSecondary,
@@ -1083,7 +1404,10 @@ class _ActiveTabState extends State<_ActiveTab> {
             ),
           ],
           const SizedBox(height: 10),
-          const Divider(height: 1, color: _border),
+          const Divider(
+            height: 1,
+            color: _border,
+          ),
           const SizedBox(height: 10),
           Row(
             children: [
@@ -1094,13 +1418,19 @@ class _ActiveTabState extends State<_ActiveTab> {
                 isService: true,
               ),
               const Spacer(),
-              _chip(distanceText, _blue, small: true),
+              _chip(
+                distanceText,
+                _blue,
+                small: true,
+              ),
             ],
           ),
-          if (order.note != null && order.note!.isNotEmpty) ...[
+          if (order.note != null &&
+              order.note!.isNotEmpty) ...[
             const SizedBox(height: 6),
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
               children: [
                 const Icon(
                   Icons.note_alt_outlined,
@@ -1111,7 +1441,10 @@ class _ActiveTabState extends State<_ActiveTab> {
                 Expanded(
                   child: Text(
                     order.note!,
-                    style: const TextStyle(fontSize: 12, color: _textSecondary),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: _textSecondary,
+                    ),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 2,
                   ),
@@ -1124,15 +1457,23 @@ class _ActiveTabState extends State<_ActiveTab> {
           if (hasActionStep) ...[
             const SizedBox(height: 16),
             if (needsPhoto)
-              _photoBox(order.id, _photoByOrderId[order.id], uploading),
+              _photoBox(
+                order.id,
+                _photoByOrderId[order.id],
+                uploading,
+              ),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: uploading ? null : () => _confirmStep(order),
+                onPressed: uploading
+                    ? null
+                    : () => _confirmStep(order),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _green,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 14,
+                  ),
                   elevation: 0,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
@@ -1164,8 +1505,13 @@ class _ActiveTabState extends State<_ActiveTab> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading)
-      return const Center(child: CircularProgressIndicator(color: _blue));
+    if (_loading) {
+      return const Center(
+        child: CircularProgressIndicator(
+          color: _blue,
+        ),
+      );
+    }
 
     if (_error != null || _orders.isEmpty) {
       return _emptyState(
@@ -1173,8 +1519,15 @@ class _ActiveTabState extends State<_ActiveTab> {
         _error ?? 'ไม่มีงานที่กำลังดำเนินการ',
         action: TextButton.icon(
           onPressed: _fetchOrders,
-          icon: const Icon(Icons.refresh, size: 18, color: _blue),
-          label: const Text('โหลดใหม่', style: TextStyle(color: _blue)),
+          icon: const Icon(
+            Icons.refresh,
+            size: 18,
+            color: _blue,
+          ),
+          label: const Text(
+            'โหลดใหม่',
+            style: TextStyle(color: _blue),
+          ),
         ),
       );
     }
@@ -1185,9 +1538,12 @@ class _ActiveTabState extends State<_ActiveTab> {
       child: ListView.separated(
         padding: const EdgeInsets.all(16),
         itemCount: _orders.length,
-        separatorBuilder: (_, __) => const SizedBox(height: 12),
-        itemBuilder: (_, i) => _buildOrderCard(_orders[i]),
+        separatorBuilder: (_, __) =>
+            const SizedBox(height: 12),
+        itemBuilder: (_, i) =>
+            _buildOrderCard(_orders[i]),
       ),
     );
   }
 }
+

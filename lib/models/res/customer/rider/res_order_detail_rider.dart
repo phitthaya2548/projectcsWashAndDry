@@ -35,30 +35,20 @@ class OrderDetailResponse {
 
 class OrderDetailData {
   String? orderId;
-  String? customerId;
-  String? addressId;
-  String? storeId;
   String? serviceType;
   num? washDryWeight;
-  num? servicePrice;
   String? detergentOption;
   String? note;
-  String? status;
   DateTime? orderDatetime;
   CustomerModel? customer;
   AddressModel? address;
 
   OrderDetailData({
     this.orderId,
-    this.customerId,
-    this.addressId,
-    this.storeId,
     this.serviceType,
     this.washDryWeight,
-    this.servicePrice,
     this.detergentOption,
     this.note,
-    this.status,
     this.orderDatetime,
     this.customer,
     this.address,
@@ -67,15 +57,10 @@ class OrderDetailData {
   factory OrderDetailData.fromJson(Map<String, dynamic> json) =>
       OrderDetailData(
         orderId: json["order_id"],
-        customerId: json["customer_id"],
-        addressId: json["address_id"],
-        storeId: json["store_id"],
         serviceType: json["service_type"],
         washDryWeight: json["wash_dry_weight"],
-        servicePrice: json["service_price"],
         detergentOption: json["detergent_option"],
         note: json["note"],
-        status: json["status"],
         orderDatetime: parseFirestoreDateTime(json["order_datetime"]),
         customer: json["customer"] == null
             ? null
@@ -87,15 +72,10 @@ class OrderDetailData {
 
   Map<String, dynamic> toJson() => {
         "order_id": orderId,
-        "customer_id": customerId,
-        "address_id": addressId,
-        "store_id": storeId,
         "service_type": serviceType,
         "wash_dry_weight": washDryWeight,
-        "service_price": servicePrice,
         "detergent_option": detergentOption,
         "note": note,
-        "status": status,
         "order_datetime": orderDatetime?.toIso8601String(),
         "customer": customer?.toJson(),
         "address": address?.toJson(),
@@ -103,33 +83,21 @@ class OrderDetailData {
 }
 
 class CustomerModel {
-  String? customerId;
-  String? username;
   String? fullname;
-  String? profileImage;
   String? phone;
 
   CustomerModel({
-    this.customerId,
-    this.username,
     this.fullname,
-    this.profileImage,
     this.phone,
   });
 
   factory CustomerModel.fromJson(Map<String, dynamic> json) => CustomerModel(
-        customerId: json["customer_id"],
-        username: json["username"],
         fullname: json["fullname"],
-        profileImage: json["profile_image"],
         phone: json["phone"],
       );
 
   Map<String, dynamic> toJson() => {
-        "customer_id": customerId,
-        "username": username,
         "fullname": fullname,
-        "profile_image": profileImage,
         "phone": phone,
       };
 }
@@ -158,18 +126,6 @@ class AddressModel {
       };
 }
 
-/// Parses order_datetime coming back from the API.
-///
-/// The backend now sends this as an ISO-8601 string (via `.toISOString()`
-/// on the server), NOT the old Firestore `{ "_seconds": ... }` map shape.
-/// The previous version of this function only handled the map shape, so
-/// for a String value it fell through and returned null -- that's why the
-/// time wasn't showing up on the order detail screen.
-///
-/// This still supports the old Firestore map shape too, in case any other
-/// endpoint still sends it that way, and always returns the DateTime
-/// converted to local time so `DateFormat(...).format(...)` shows the
-/// correct Thailand time instead of raw UTC.
 DateTime? parseFirestoreDateTime(dynamic json) {
   if (json == null) {
     return null;

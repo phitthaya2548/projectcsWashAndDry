@@ -109,7 +109,7 @@ class RoleSelectScreen extends StatelessWidget {
 
                           
                           _RoleCard(
-                            title: 'ไรเดอร์',
+                            title: 'พนักงานรับส่ง',
                             subtitle: 'รับ-ส่งงานซักผ้า',
                             icon: Icons.delivery_dining,
                             onTap: () {
@@ -120,7 +120,7 @@ class RoleSelectScreen extends StatelessWidget {
 
                     
                           _RoleCard(
-                            title: 'พนักงานซักผ้า',
+                            title: 'พนักงานซักอบ',
                             subtitle: 'จัดการงานซัก-อบ',
                             icon: Icons.local_laundry_service,
                             onTap: () {

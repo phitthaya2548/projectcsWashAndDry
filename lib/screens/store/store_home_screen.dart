@@ -12,7 +12,7 @@ import 'package:wash_and_dry/models/res/customer/res_order_completed_customer.da
 import 'package:wash_and_dry/models/res/customer/store/res_list_register_employee_store.dart';
 import 'package:wash_and_dry/models/res/customer/store/res_profile_store.dart';
 import 'package:wash_and_dry/screens/store/manage_store/store_manage_employee_screen.dart';
-import 'package:wash_and_dry/screens/store/manage_store/store_managemachine_screen.dart';
+import 'package:wash_and_dry/screens/store/manage_store/store_manage_machine_screen.dart';
 import 'package:wash_and_dry/screens/store/store_befororder_detail_screen.dart';
 import 'package:wash_and_dry/screens/store/store_new_order_screen.dart';
 import 'package:wash_and_dry/screens/store/store_review_screen.dart';
@@ -233,7 +233,7 @@ class _StoreHomeScreenState extends State<StoreHomeScreen> {
     }
     try {
       final res = await http
-          .post(
+          .put(
             Uri.parse('$url/order/store/accept/$orderId'),
             headers: {'Content-Type': 'application/json'},
             body: json.encode({'store_id': storeId}),

@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
+import 'package:wash_and_dry/config/config.dart';
 
 class CustomerMapScreen extends StatefulWidget {
   final String orderId;
@@ -20,6 +21,7 @@ class CustomerMapScreen extends StatefulWidget {
 
 class _CustomerMapScreenState extends State<CustomerMapScreen> {
   static const _blue = Color(0xFF0593FF);
+  static const _orange = Color(0xFFFF8A34);
 
   static const _pickupStatuses = {
     'pickup_in_progress',
@@ -41,9 +43,10 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
   String _status = '', _riderName = '', _address = '';
   String? _riderId, _riderImage, _phone, _vehicle, _plate;
   String? _distance, _duration, _customerImage, _error;
+  String? _apiUrl, _storeName, _storeAddress, _storeImage;
 
-  LatLng? _riderPos, _destPos;
-  BitmapDescriptor? _riderIcon, _destIcon;
+  LatLng? _riderPos, _destPos, _storePos;
+  BitmapDescriptor? _riderIcon, _destIcon, _storeIcon;
 
   bool _loading = true;
   int _trackingVersion = 0, _routeVersion = 0;
@@ -66,6 +69,9 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
 
   Future<void> _init() async {
     try {
+      final config = await Configuration.getConfig();
+      _apiUrl = config['apiEndpoint']?.toString() ?? '';
+
       final ref = FirebaseFirestore.instance.collection('orders').doc(widget.orderId);
       final snap = await ref.get();
 
@@ -78,6 +84,7 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
       _status = data['status']?.toString() ?? '';
 
       await _loadDestination(data);
+      await _loadStore(data);
       await _setupRider(data);
 
       _orderSub?.cancel();
@@ -121,6 +128,61 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
           infoWindow: InfoWindow(title: 'ปลายทาง', snippet: _address),
         ));
     });
+  }
+
+  String? _refId(dynamic value) {
+    if (value is DocumentReference) return value.id;
+    if (value is String && value.trim().isNotEmpty) return value.trim();
+    return null;
+  }
+
+  Future<void> _loadStore(Map<String, dynamic> data) async {
+    final storeId = _refId(data['store_id']);
+    if (storeId == null) return;
+
+    final base = _apiUrl;
+    if (base == null || base.isEmpty) return;
+
+    try {
+      final res = await http
+          .get(Uri.parse('$base/order/rider/store/address/$storeId'))
+          .timeout(const Duration(seconds: 10));
+
+      if (res.statusCode != 200) return;
+
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      if (body['ok'] != true) return;
+
+      final store = body['data'] as Map<String, dynamic>?;
+      if (store == null) return;
+
+      final lat = (store['latitude'] as num?)?.toDouble();
+      final lng = (store['longitude'] as num?)?.toDouble();
+      if (lat == null || lng == null) return;
+
+      _storePos = LatLng(lat, lng);
+      _storeName = store['store_name']?.toString() ?? 'ร้านค้า';
+      _storeAddress = store['address']?.toString();
+      _storeImage = store['image']?.toString();
+      _storeIcon = await _makeMarker(_storeImage, _orange);
+
+      if (!mounted) return;
+
+      setState(() {
+        _markers
+          ..removeWhere((m) => m.markerId.value == 'store')
+          ..add(Marker(
+            markerId: const MarkerId('store'),
+            position: _storePos!,
+            icon: _storeIcon ??
+                BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
+            infoWindow: InfoWindow(
+              title: 'ร้าน $_storeName',
+              snippet: _storeAddress?.isNotEmpty == true ? _storeAddress : _storeName,
+            ),
+          ));
+      });
+    } catch (_) {}
   }
 
   DocumentReference? _activeRider(Map<String, dynamic> data) {
@@ -217,7 +279,9 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
       _polylines.removeWhere((p) => p.polylineId.value == 'route');
     });
 
-    if (_destPos != null) {
+    if (_storePos != null) {
+      _map?.animateCamera(CameraUpdate.newLatLngZoom(_storePos!, 15));
+    } else if (_destPos != null) {
       _map?.animateCamera(CameraUpdate.newLatLngZoom(_destPos!, 15));
     }
   }
@@ -248,7 +312,7 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
 
     if (_destPos != null) {
       _drawRoute(pos, _destPos!);
-      _fitBounds(pos, _destPos!);
+      _fitBounds([pos, _destPos!, if (_storePos != null) _storePos!]);
     }
   }
 
@@ -299,23 +363,31 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
     } catch (_) {}
   }
 
-  void _fitBounds(LatLng a, LatLng b) {
-    if (a == b) {
-      _map?.animateCamera(CameraUpdate.newLatLngZoom(a, 16));
+  void _fitBounds(List<LatLng> points) {
+    if (points.isEmpty) return;
+
+    if (points.length == 1 || points.every((p) => p == points.first)) {
+      _map?.animateCamera(CameraUpdate.newLatLngZoom(points.first, 16));
       return;
+    }
+
+    var minLat = points.first.latitude;
+    var maxLat = points.first.latitude;
+    var minLng = points.first.longitude;
+    var maxLng = points.first.longitude;
+
+    for (final p in points) {
+      minLat = min(minLat, p.latitude);
+      maxLat = max(maxLat, p.latitude);
+      minLng = min(minLng, p.longitude);
+      maxLng = max(maxLng, p.longitude);
     }
 
     _map?.animateCamera(
       CameraUpdate.newLatLngBounds(
         LatLngBounds(
-          southwest: LatLng(
-            min(a.latitude, b.latitude),
-            min(a.longitude, b.longitude),
-          ),
-          northeast: LatLng(
-            max(a.latitude, b.latitude),
-            max(a.longitude, b.longitude),
-          ),
+          southwest: LatLng(minLat, minLng),
+          northeast: LatLng(maxLat, maxLng),
         ),
         80,
       ),
@@ -409,18 +481,9 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
   }
 
   String _vehicleText(String value) {
-    // รองรับค่าประเภทยานพาหนะจาก Backend ที่เป็นภาษาอังกฤษ
-    // และแปลงเป็นภาษาไทยสำหรับแสดงผลบน UI
     const data = {
       'motorcycle': 'มอเตอร์ไซค์',
-      'motorbike': 'มอเตอร์ไซค์',
       'car': 'รถยนต์',
-
-      // รองรับข้อมูลเก่าที่อาจถูกบันทึกเป็นภาษาไทย
-      'มอเตอร์ไซค์': 'มอเตอร์ไซค์',
-      'จักรยานยนต์': 'มอเตอร์ไซค์',
-      'รถจักรยานยนต์': 'มอเตอร์ไซค์',
-      'รถยนต์': 'รถยนต์',
     };
 
     final normalized = value.trim().toLowerCase();
@@ -482,7 +545,7 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
       );
     }
 
-    final initial = _riderPos ?? _destPos ?? const LatLng(13.7563, 100.5018);
+    final initial = _riderPos ?? _storePos ?? _destPos ?? const LatLng(13.7563, 100.5018);
 
     return Stack(
       children: [
@@ -495,7 +558,9 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
           onMapCreated: (c) {
             _map = c;
             if (_riderPos != null && _destPos != null) {
-              _fitBounds(_riderPos!, _destPos!);
+              _fitBounds([_riderPos!, _destPos!, if (_storePos != null) _storePos!]);
+            } else if (_storePos != null) {
+              c.animateCamera(CameraUpdate.newLatLngZoom(_storePos!, 15));
             } else if (_destPos != null) {
               c.animateCamera(CameraUpdate.newLatLngZoom(_destPos!, 15));
             }

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:developer';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
@@ -24,6 +23,7 @@ class _MapPickerState extends State<MapPicker> {
   bool isLoadingAddress = false;
   bool isLoadingLocation = false;
   bool isSearching = false;
+  bool isMoving = false;
 
   final searchController = TextEditingController();
 
@@ -35,7 +35,6 @@ class _MapPickerState extends State<MapPicker> {
     super.initState();
     _initializeLocation();
   }
-
 
   Future<void> _initializeLocation() async {
     if (widget.initialPosition != null) {
@@ -53,7 +52,7 @@ class _MapPickerState extends State<MapPicker> {
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
       }
-  
+
       if (permission == LocationPermission.deniedForever) {
         _setDefaultLocation();
         return;
@@ -68,6 +67,7 @@ class _MapPickerState extends State<MapPicker> {
       await _updateAddress(selected!);
     } catch (e) {
       _setDefaultLocation();
+      return;
     }
 
     setState(() => isLoadingLocation = false);
@@ -76,9 +76,8 @@ class _MapPickerState extends State<MapPicker> {
   void _setDefaultLocation() async {
     selected = const LatLng(13.736717, 100.523186);
     await _updateAddress(selected!);
-    setState(() => isLoadingLocation = false);
+    if (mounted) setState(() => isLoadingLocation = false);
   }
-
 
   Future<void> _updateAddress(LatLng pos) async {
     setState(() => isLoadingAddress = true);
@@ -107,8 +106,6 @@ class _MapPickerState extends State<MapPicker> {
       setState(() => isLoadingAddress = false);
     }
   }
-
-
 
   Future<void> searchLocation(String query) async {
     if (query.trim().isEmpty) return;
@@ -140,12 +137,12 @@ class _MapPickerState extends State<MapPicker> {
 
       final target = LatLng(loc['lat'], loc['lng']);
 
-      selected = target;
-      setState(() {});
-
       await mapController?.animateCamera(
         CameraUpdate.newLatLngZoom(target, 16),
       );
+
+      selected = target;
+      setState(() {});
 
       await _updateAddress(target);
     } catch (e) {
@@ -154,7 +151,6 @@ class _MapPickerState extends State<MapPicker> {
 
     setState(() => isSearching = false);
   }
-
 
   void _showError(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -169,7 +165,6 @@ class _MapPickerState extends State<MapPicker> {
     super.dispose();
   }
 
-
   @override
   Widget build(BuildContext context) {
     if (selected == null || isLoadingLocation) {
@@ -179,9 +174,10 @@ class _MapPickerState extends State<MapPicker> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text("เลือกตำแหน่ง", style: TextStyle(color: Colors.white)),
-      flexibleSpace: Container(
-          decoration: BoxDecoration(
+      appBar: AppBar(
+        title: const Text("เลือกตำแหน่ง", style: TextStyle(color: Colors.white)),
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
@@ -189,41 +185,50 @@ class _MapPickerState extends State<MapPicker> {
             ),
           ),
         ),
-        iconTheme: IconThemeData(color: Colors.white),),
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
       body: Stack(
         children: [
           GoogleMap(
-            initialCameraPosition:
-                CameraPosition(target: selected!, zoom: 16),
+            initialCameraPosition: CameraPosition(target: selected!, zoom: 16),
             onMapCreated: (c) => mapController = c,
-
-            onTap: (pos) {
-              selected = pos;
-              setState(() {});
-              _updateAddress(pos);
+            onCameraMoveStarted: () {
+              _debounce?.cancel();
+              if (!isMoving) setState(() => isMoving = true);
             },
-
             onCameraMove: (pos) => selected = pos.target,
-
-            
             onCameraIdle: () {
+              if (isMoving) setState(() => isMoving = false);
               _debounce?.cancel();
               _debounce = Timer(
-                const Duration(milliseconds: 200),
+                const Duration(milliseconds: 300),
                 () => _updateAddress(selected!),
               );
             },
-
-            markers: {
-              Marker(
-                markerId: const MarkerId("pin"),
-                position: selected!,
-              ),
-            },
-
             myLocationEnabled: true,
             myLocationButtonEnabled: true,
             zoomControlsEnabled: true,
+            zoomGesturesEnabled: true,
+            scrollGesturesEnabled: true,
+            rotateGesturesEnabled: true,
+            tiltGesturesEnabled: true,
+          ),
+
+          IgnorePointer(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 36),
+                child: AnimatedScale(
+                  scale: isMoving ? 1.15 : 1.0,
+                  duration: const Duration(milliseconds: 150),
+                  child: const Icon(
+                    Icons.location_pin,
+                    size: 48,
+                    color: Colors.red,
+                  ),
+                ),
+              ),
+            ),
           ),
 
           _buildSearchBar(),
@@ -259,7 +264,6 @@ class _MapPickerState extends State<MapPicker> {
       ),
     );
   }
-
 
   Widget _buildBottomSheet() {
     return Positioned(

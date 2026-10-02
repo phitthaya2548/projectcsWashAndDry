@@ -26,8 +26,6 @@ class _StoreOrderItem {
   });
 }
 
-/// หน้าแสดง "ออเดอร์ใหม่" ทั้งหมดของร้าน (สถานะ pending_confirmation)
-/// แยกออกจากหน้า home ที่โชว์แค่ 3 รายการล่าสุด
 class StoreNewOrdersScreen extends StatefulWidget {
   const StoreNewOrdersScreen({super.key});
 
@@ -158,7 +156,7 @@ class _StoreNewOrdersScreenState extends State<StoreNewOrdersScreen> {
     }
     try {
       final res = await http
-          .post(
+          .put(
             Uri.parse('$url/order/store/accept/$orderId'),
             headers: {'Content-Type': 'application/json'},
             body: json.encode({'store_id': storeId}),

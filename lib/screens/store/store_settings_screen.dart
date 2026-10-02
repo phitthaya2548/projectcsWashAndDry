@@ -10,7 +10,7 @@ import 'package:wash_and_dry/config/config.dart';
 import 'package:wash_and_dry/models/res/customer/store/res_profile_store.dart';
 import 'package:wash_and_dry/screens/login_screen.dart';
 import 'package:wash_and_dry/screens/store/manage_store/store_manage_custoomer_screen.dart';
-import 'package:wash_and_dry/screens/store/manage_store/store_managemachine_screen.dart';
+import 'package:wash_and_dry/screens/store/manage_store/store_manage_machine_screen.dart';
 import 'package:wash_and_dry/screens/store/store_edit_store_screen.dart';
 import 'package:wash_and_dry/screens/store/manage_store/store_manage_employee_screen.dart';
 import 'package:wash_and_dry/screens/store/store_review_screen.dart';

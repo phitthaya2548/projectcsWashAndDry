@@ -66,17 +66,23 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
   static const _activeStatuses = {
     'pending_confirmation',
     'waiting_payment',
+    'payment_completed',
     'waiting_pickup',
     'pickup_in_progress',
     'pickup_completed',
+    'arrived_at_shop',
     'waiting_wash',
     'washing',
     'waiting_dry',
     'drying',
     'waiting_delivery',
+    'delivery_heading_to_shop',
+    'delivery_pickup_completed',
     'store_pickup_in_progress',
     'delivery_in_progress',
   };
+
+
   static const _doneStatuses = {'completed'};
   static const _cancelStatuses = {'cancelled'};
 
@@ -163,7 +169,7 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
       _ordersError = null;
     });
     try {
-      final uri = Uri.parse('$url/order/store/process/list/$storeId');
+      final uri = Uri.parse('$url/order/store/order/list/$storeId');
       final res = await http.get(uri).timeout(const Duration(seconds: 10));
       if (!mounted) return;
 

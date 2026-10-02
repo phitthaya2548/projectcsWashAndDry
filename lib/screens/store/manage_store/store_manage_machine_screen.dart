@@ -120,6 +120,7 @@ class _ManageMachineScreenState extends State<ManageMachineScreen> {
     required int capacity,
     required double price,
     required int workMinutes,
+    required String status,
   }) async {
     try {
       if (url.isEmpty) {
@@ -133,6 +134,7 @@ class _ManageMachineScreenState extends State<ManageMachineScreen> {
         capacity: capacity,
         price: price,
         workMinutes: workMinutes,
+        status: status,
       );
 
       final res = await http.put(
@@ -190,6 +192,17 @@ class _ManageMachineScreenState extends State<ManageMachineScreen> {
       borderRadius: 12,
       duration: const Duration(seconds: 3),
     );
+  }
+
+  String _statusToKey(MachineStatus status) {
+    switch (status) {
+      case MachineStatus.available:
+        return 'available';
+      case MachineStatus.busy:
+        return 'busy';
+      case MachineStatus.maintenance:
+        return 'maintenance';
+    }
   }
 
   void _showAddDialog() {
@@ -442,6 +455,7 @@ class _ManageMachineScreenState extends State<ManageMachineScreen> {
     );
 
     String selectedType = machine.type;
+    String selectedStatus = _statusToKey(machine.status);
     bool isLoading = false;
 
     Get.dialog(
@@ -517,6 +531,11 @@ class _ManageMachineScreenState extends State<ManageMachineScreen> {
                             _dropdown(
                               selectedType,
                               (v) => setState(() => selectedType = v),
+                            ),
+                            const SizedBox(height: 14),
+                            _statusDropdown(
+                              selectedStatus,
+                              (v) => setState(() => selectedStatus = v),
                             ),
                             const SizedBox(height: 14),
                             _field('ชื่อเครื่อง', name, 'เช่น เครื่องซัก A1'),
@@ -606,6 +625,7 @@ class _ManageMachineScreenState extends State<ManageMachineScreen> {
                                               workMinutes: int.parse(
                                                 workMinutes.text,
                                               ),
+                                              status: selectedStatus,
                                             );
 
                                             setState(
@@ -1075,6 +1095,82 @@ class _ManageMachineScreenState extends State<ManageMachineScreen> {
                           Icons.local_laundry_service_rounded,
                           size: 18,
                           color: Color(0xFF007AFF),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          e.key,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (val) {
+              if (val != null) onChanged(val);
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _statusDropdown(String value, Function(String) onChanged) {
+    final statusMap = {
+      'ว่าง': 'available',
+      'ปิดปรับปรุง': 'maintenance',
+    };
+
+    final statusColor = {
+      'available': const Color(0xFF34C759),
+      'maintenance': const Color(0xFFFF3B30),
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'สถานะเครื่อง',
+          style: TextStyle(
+            fontSize: 13,
+            color: Color(0xFF64748B),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+          ),
+          child: DropdownButtonFormField<String>(
+            value: value,
+            dropdownColor: Colors.white,
+            icon: const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: Color(0xFF007AFF),
+            ),
+            decoration: const InputDecoration(
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 14,
+              ),
+            ),
+            items: statusMap.entries
+                .map(
+                  (e) => DropdownMenuItem<String>(
+                    value: e.value,
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.circle,
+                          size: 10,
+                          color: statusColor[e.value],
                         ),
                         const SizedBox(width: 10),
                         Text(

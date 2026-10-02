@@ -103,7 +103,7 @@ class _CustomerStoreDetailState extends State<CustomerStoreDetailScreen> {
       _isLoading = true;
       _errorMessage = null;
       _isLoadingReviews = true;
-      _selectedRatingFilter = null;
+      _selectedRatingFilter = null;                   
     });
     _loadData();
   }

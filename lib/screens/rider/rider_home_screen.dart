@@ -322,7 +322,7 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
 
   Future<void> _acceptOrder(String orderId) async {
     try {
-      final res = await http.post(
+      final res = await http.put(
         Uri.parse('$_url/order/rider/accept/$orderId'),
         headers: {'Content-Type': 'application/json'},
         body: acceptOrderRequestToJson(AcceptOrderRequest(riderId: _riderId!)),

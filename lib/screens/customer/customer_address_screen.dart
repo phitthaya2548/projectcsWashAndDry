@@ -144,21 +144,137 @@ class _CustomerAddressScreenState extends State<CustomerAddressScreen> {
     }
   }
 
-  Future<void> deleteAddress(String id) async {
-    try {
-      final res = await http.delete(
-        Uri.parse("$url/customer/addresses/delete/$id"),
-      );
+Future<void> deleteAddress(String id) async {
+  try {
+    final res = await http.delete(
+      Uri.parse("$url/customer/addresses/delete/$id"),
+    );
 
-      if (res.statusCode == 200) {
-        await loadAddresses();
-        _showSnack("ลบที่อยู่สำเร็จ", true);
-      }
-    } catch (e) {
-      log("Delete error: $e");
-      _showSnack("ไม่สามารถลบได้", false);
+    if (res.statusCode == 200) {
+      await loadAddresses();
+      _showSnack("ลบที่อยู่สำเร็จ", true);
+    } else {
+      log("Delete address failed: ${res.statusCode} ${res.body}");
+      _showSnack("ไม่สามารถลบที่อยู่ได้", false);
     }
+  } catch (e) {
+    log("Delete error: $e");
+    _showSnack("ไม่สามารถลบได้", false);
   }
+}
+
+void _deleteAddressNotification(String id) {
+  Get.dialog(
+    Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(20),
+          color: Colors.white,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.delete_outline_rounded,
+                color: Colors.red.shade400,
+                size: 32,
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text(
+              'ยืนยันการลบ',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF333333),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'ต้องการลบที่อยู่นี้ใช่หรือไม่?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: Color(0xFF757575),
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {
+                      Get.back();
+                    },
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 14,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      side: const BorderSide(
+                        color: Color(0xFFE0E0E0),
+                      ),
+                    ),
+                    child: const Text(
+                      'ยกเลิก',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF757575),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () async {
+                      Get.back();
+                      await deleteAddress(id);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 14,
+                      ),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'ยืนยัน',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+    barrierDismissible: true,
+  );
+}
 
   Future<void> setDefault(String id) async {
     try {
@@ -173,6 +289,7 @@ class _CustomerAddressScreenState extends State<CustomerAddressScreen> {
       log("Set default error: $e");
     }
   }
+  
 
   void showAddDialog() {
     _showAddressDialog(
@@ -501,7 +618,7 @@ class _CustomerAddressScreenState extends State<CustomerAddressScreen> {
                         else if (v == "default")
                           setDefault(a.id!);
                         else if (v == "delete")
-                          deleteAddress(a.id!);
+                          _deleteAddressNotification(a.id!);
                       },
                     ),
                   ),

@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <application
-        android:label="wash_and_dry"
+        android:label="wash&dry"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
          android:allowBackup="false"

@@ -46,7 +46,7 @@ class _CustomerCompletedScreenState extends State<CustomerCompletedScreen> {
     });
     try {
       final res = await http.get(
-        Uri.parse('$url/order/customer/completed/${widget.orderId}'),
+        Uri.parse('$url/order/customer/completed/detail/${widget.orderId}'),
         headers: {'Content-Type': 'application/json'},
       );
       if (res.statusCode == 200) {

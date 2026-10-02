@@ -41,12 +41,12 @@ class _StoreOnboardingScreenState extends State<StoreOnboardingScreen> {
   final _phoneController = TextEditingController();
   final _emailController = TextEditingController();
   final _addressController = TextEditingController();
-  final _serviceRadiusController = TextEditingController(text: "0");
-  final _openingTimeController = TextEditingController(text: "00:00");
-  final _closingTimeController = TextEditingController(text: "00:00");
-  final _minDeliveryController = TextEditingController(text: "0");
-  final _maxDeliveryController = TextEditingController(text: "0");
-  final _detergentPriceController = TextEditingController(text: "0");
+  final _serviceRadiusController = TextEditingController();
+  final _openingTimeController = TextEditingController();
+  final _closingTimeController = TextEditingController();
+  final _minDeliveryController = TextEditingController();
+  final _maxDeliveryController = TextEditingController();
+  final _detergentPriceController = TextEditingController();
   final _facebookController = TextEditingController();
   final _lineIdController = TextEditingController();
 
@@ -620,7 +620,6 @@ class _StoreOnboardingScreenState extends State<StoreOnboardingScreen> {
       if (mounted) setState(() => _isLoading = false);
     }
   }
-
 
   StoreProfileModel _buildProfileModel() {
     return StoreProfileModel(
@@ -1356,29 +1355,29 @@ class _StoreOnboardingScreenState extends State<StoreOnboardingScreen> {
     return Scaffold(
       backgroundColor: _pageBackground,
       appBar: AppBar(
-  elevation: 0,
-  centerTitle: true,
-  automaticallyImplyLeading: false,
-  flexibleSpace: Container(
-    decoration: const BoxDecoration(
-      gradient: LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [
-          Color(0xFF0593FF),
-          Color(0xFF0476D9),
-        ],
+        elevation: 0,
+        centerTitle: true,
+        automaticallyImplyLeading: false,
+        flexibleSpace: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xFF0593FF),
+                Color(0xFF0476D9),
+              ],
+            ),
+          ),
+        ),
+        title: const Text(
+          "ตั้งค่าร้านค้า",
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
       ),
-    ),
-  ),
-  title: const Text(
-    "ตั้งค่าร้านค้า",
-    style: TextStyle(
-      color: Colors.white,
-      fontWeight: FontWeight.w600,
-    ),
-  ),
-),
       body: Column(
         children: [
           _buildStepIndicator(),

@@ -944,37 +944,34 @@ class _RiderRegisterScreenState extends State<RiderRegisterScreen> {
         color: darkText,
       ),
       decoration: _inputDeco(
-        hint: 'ประเภทรถ',
-        icon: Icons.directions_bike_outlined,
-      ),
-      icon: Icon(
-        Icons.keyboard_arrow_down_rounded,
-        color: Colors.grey.shade500,
-        size: 22,
-      ),
-      items: _vehicleTypes.map((type) {
-        final vehicleIcon = type == 'มอเตอร์ไซค์'
-            ? Icons.two_wheeler
-            : Icons.directions_car;
+  hint: 'ประเภทรถ',
+  icon: _vehicleType == 'มอเตอร์ไซค์'
+      ? Icons.two_wheeler
+      : Icons.directions_car,
+),
 
-        return DropdownMenuItem<String>(
-          value: type,
-          child: Row(
-            children: [
-              Icon(vehicleIcon, size: 18, color: primaryBlue),
-              const SizedBox(width: 10),
-              Text(type),
-            ],
-          ),
-        );
-      }).toList(),
-      onChanged: _isLoading
-          ? null
-          : (value) {
-              if (value != null) {
-                setState(() => _vehicleType = value);
-              }
-            },
+icon: Icon(
+  Icons.keyboard_arrow_down_rounded,
+  color: Colors.grey.shade500,
+  size: 22,
+),
+
+items: _vehicleTypes.map((type) {
+  return DropdownMenuItem<String>(
+    value: type,
+    child: Text(type),
+  );
+}).toList(),
+
+onChanged: _isLoading
+    ? null
+    : (value) {
+        if (value != null) {
+          setState(() {
+            _vehicleType = value;
+          });
+        }
+      },
     );
   }
 

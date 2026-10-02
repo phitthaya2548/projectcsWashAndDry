@@ -12,6 +12,7 @@ class UpdateMachineRequest {
   final int capacity;
   final double price;
   final int workMinutes;
+  final String status;
 
   UpdateMachineRequest({
     required this.name,
@@ -19,6 +20,7 @@ class UpdateMachineRequest {
     required this.capacity,
     required this.price,
     required this.workMinutes,
+    required this.status,
   });
 
   factory UpdateMachineRequest.fromJson(Map<String, dynamic> json) {
@@ -28,6 +30,7 @@ class UpdateMachineRequest {
       capacity: json['capacity'] ?? 0,
       price: (json['price'] ?? 0).toDouble(),
       workMinutes: json['work_minutes'] ?? 0,
+      status: json['status'] ?? '',
     );
   }
 
@@ -38,6 +41,7 @@ class UpdateMachineRequest {
       'capacity': capacity,
       'price': price,
       'work_minutes': workMinutes,
+      'status': status,
     };
   }
 }

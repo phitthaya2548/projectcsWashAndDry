@@ -56,7 +56,7 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
       _apiUrl = apiUrl;
       _storeId = await Session().getStoreId();
 
-      final uri = Uri.parse('$apiUrl/order/store/detail/${widget.orderId}');
+      final uri = Uri.parse('$apiUrl/order/store/before/detail/${widget.orderId}');
       final res = await http
           .get(uri, headers: {'Content-Type': 'application/json'})
           .timeout(const Duration(seconds: 10));
@@ -102,7 +102,7 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
     setState(() => _isAccepting = true);
     try {
       final res = await http
-          .post(
+          .put(
             Uri.parse('$_apiUrl/order/store/accept/${widget.orderId}'),
             headers: {'Content-Type': 'application/json'},
             body: json.encode({'store_id': _storeId}),

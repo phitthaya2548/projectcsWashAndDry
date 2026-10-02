@@ -41,7 +41,6 @@ class _EditLaundryStaffScreenState extends State<EditLaundryStaffScreen> {
 
   String url = '';
 
-  // ---- Shared theme (matches rider / customer profile edit screens) ----
   static const Color _primary = Color(0xFF0593FF);
   static const Color _primaryDark = Color(0xFF0476D9);
   static const Color _background = Color(0xFFF6F8FC);
