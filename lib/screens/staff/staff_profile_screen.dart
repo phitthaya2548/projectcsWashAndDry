@@ -313,7 +313,7 @@ class _StaffProfileScreenState extends State<StaffProfileScreen> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
               child: Row(
                 children: [
-                  _buildCircleBtn(Icons.menu, () {}),
+                  
                   const Expanded(
                     child: Center(
                       child: Text(

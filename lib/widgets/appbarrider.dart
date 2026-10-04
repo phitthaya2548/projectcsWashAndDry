@@ -235,7 +235,7 @@ class _AppBarRiderState extends State<AppBarRider> {
       case 'ONLINE':
         return 'ออนไลน์';
       case 'TEMP_CLOSED':
-        return 'ปิดชั่วคราว';
+        return 'หยุดงาน';
       default:
         return 'ออฟไลน์';
     }

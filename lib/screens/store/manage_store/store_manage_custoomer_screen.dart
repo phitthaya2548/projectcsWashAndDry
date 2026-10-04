@@ -74,7 +74,7 @@ class _ManageCustomersScreenState extends State<ManageCustomersScreen> {
     }
   }
 
-  // เรียก GET /history/order/customers/:id?q=search
+
   Future<void> _fetchCustomers({String search = ''}) async {
     if (url.isEmpty || _storeId == null) return;
 

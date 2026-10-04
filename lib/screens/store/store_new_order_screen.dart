@@ -186,7 +186,7 @@ class _StoreNewOrdersScreenState extends State<StoreNewOrdersScreen> {
 
     try {
       final res = await http
-          .post(
+          .put(
             Uri.parse('$url/order/store/cancel/$orderId'),
             headers: {'Content-Type': 'application/json'},
             body: json.encode({'store_id': storeId}),

@@ -44,7 +44,6 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
 
   final _vehicleTypes = const ['มอเตอร์ไซค์', 'รถยนต์'];
 
-  // ---- Shared theme (matches customer profile edit screen) ----
   static const Color _primary = Color(0xFF0593FF);
   static const Color _primaryDark = Color(0xFF0476D9);
   static const Color _background = Color(0xFFF6F8FC);
@@ -98,8 +97,6 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
         _controllers['licensePlate']!.text = rider.licensePlate;
 
         setState(() {
-          // Backend เก็บ vehicle_type เป็นภาษาอังกฤษ
-          // แต่หน้า UI ยังคงแสดงเป็นภาษาไทย
           switch (rider.vehicleType.toLowerCase()) {
             case 'motorcycle':
             case 'motorbike':
@@ -257,7 +254,6 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // หน้าแอปแสดงภาษาไทย แต่ส่ง vehicle_type ไป Backend เป็นภาษาอังกฤษ
       final backendVehicleType =
           _vehicleType == 'มอเตอร์ไซค์' ? 'motorcycle' : 'car';
 
@@ -407,7 +403,7 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
       appBar: AppBar(
         iconTheme: const IconThemeData(color: Colors.white),
         title: const Text(
-          'แก้ไขพนักงานจัดส่ง',
+          'แก้ไขพนักงานรับส่ง',
           style: TextStyle(
             color: Colors.white,
             fontWeight: FontWeight.w700,
@@ -433,7 +429,6 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                 children: [
-                  // ---- Avatar section (same pattern as customer screen) ----
                   _sectionCard(
                     child: Column(
                       children: [
@@ -502,9 +497,9 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
                           ),
                         ),
                         const SizedBox(height: 4),
-                        Text(
-                          'แก้ไขข้อมูลบัญชีพนักงานจัดส่ง',
-                          style: const TextStyle(
+                        const Text(
+                          'แก้ไขข้อมูลบัญชีพนักงานรับส่ง',
+                          style: TextStyle(
                             fontSize: 14,
                             color: _textSub,
                           ),
@@ -513,8 +508,6 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
                     ),
                   ),
                   const SizedBox(height: 14),
-
-                  // ---- Personal info ----
                   _sectionCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -559,52 +552,34 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
                                   ? 'เบอร์โทรศัพท์ต้องมี 10 หลัก'
                                   : null,
                         ),
+                        const SizedBox(height: 14),
+                        DropdownButtonFormField<String>(
+                          value: _vehicleType,
+                          isExpanded: true,
+                          decoration: _inputDecoration(
+                            label: 'ประเภทรถ',
+                            icon: _vehicleType == 'มอเตอร์ไซค์'
+                                ? Icons.two_wheeler
+                                : Icons.directions_car,
+                          ),
+                          items: _vehicleTypes
+                              .map(
+                                (type) => DropdownMenuItem<String>(
+                                  value: type,
+                                  child: Text(type),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() => _vehicleType = value);
+                            }
+                          },
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 14),
-
-                  DropdownButtonFormField<String>(
-  value: _vehicleType,
-  decoration: _inputDecoration(
-    label: 'ประเภทรถ',
-    icon: (_vehicleType == 'มอเตอร์ไซค์' ||
-            _vehicleType == 'จักรยานยนต์')
-        ? Icons.two_wheeler
-        : Icons.directions_car,
-  ),
-  items: _vehicleTypes.map((type) {
-    final vehicleIcon = (type == 'มอเตอร์ไซค์' ||
-            type == 'จักรยานยนต์')
-        ? Icons.two_wheeler
-        : Icons.directions_car;
-
-    return DropdownMenuItem<String>(
-      value: type,
-      child: Row(
-        children: [
-          Icon(
-            vehicleIcon,
-            size: 20,
-            color: _textSub,
-          ),
-          const SizedBox(width: 10),
-          Text(type),
-        ],
-      ),
-    );
-  }).toList(),
-  onChanged: (value) {
-    if (value != null) {
-      setState(() {
-        _vehicleType = value;
-      });
-    }
-  },
-),
                   const SizedBox(height: 20),
-
-
                   Container(
                     height: 54,
                     decoration: BoxDecoration(

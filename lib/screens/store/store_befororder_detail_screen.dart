@@ -146,7 +146,7 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
     setState(() => _isCancelling = true);
     try {
       final res = await http
-          .post(
+          .put(
             Uri.parse('$_apiUrl/order/store/cancel/${widget.orderId}'),
             headers: {'Content-Type': 'application/json'},
             body: json.encode({'store_id': _storeId}),

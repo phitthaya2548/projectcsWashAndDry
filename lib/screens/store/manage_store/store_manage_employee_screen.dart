@@ -15,7 +15,7 @@ import 'package:wash_and_dry/service/session_service.dart';
 class _Palette {
   static const primary = Color(0xFF0593FF);
   static const primaryTint = Color(0xFFEAF4FF);
-  static const mint = Color(0xFF17B990);
+  static const mint = Color(0xFF16D957);
   static const mintTint = Color(0xFFE3F8F2);
   static const danger = Color(0xFFE5484D);
   static const dangerTint = Color(0xFFFDEBEC);
@@ -501,7 +501,7 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
       ),
       child: Column(
         children: [
-          Icon(icon, size: 28, color: _Palette.mutedLight),
+          Icon(icon, size: 28, color: _Palette.danger),
           const SizedBox(height: 8),
           Text(
             message,
@@ -517,7 +517,7 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
       case 'ONLINE':
         return const _StatusInfo('ใช้งาน', true);
       case 'TEMP_CLOSED':
-        return const _StatusInfo('ปิดชั่วคราว', false);
+        return const _StatusInfo('หยุดงาน', false);
       default:
         return const _StatusInfo('ไม่ทราบสถานะ', false);
     }
@@ -777,7 +777,7 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
                 onConfirm: () => _deleteStaff(staff.id),
               );
             },
-            icon: const Icon(Icons.delete_outline_rounded, size: 19, color: _Palette.mutedLight),
+            icon: const Icon(Icons.delete_outline_rounded, size: 19, color: _Palette.danger),
             splashRadius: 20,
             constraints: const BoxConstraints(),
             padding: const EdgeInsets.only(left: 6),
