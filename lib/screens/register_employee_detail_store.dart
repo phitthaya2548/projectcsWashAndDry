@@ -1279,7 +1279,7 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen> {
                   label: _isApplying
                       ? _buttonSpinner(_kPrimary)
                       : const Text(
-                          'สมัครพนักงานไรเดอร์',
+                          'สมัครพนักงานรับส่ง',
                           style: TextStyle(
                             color: _kPrimary,
                             fontWeight: FontWeight.w700,

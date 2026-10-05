@@ -57,6 +57,9 @@ class RiderHomeScreen extends StatefulWidget {
 class _RiderHomeScreenState extends State<RiderHomeScreen> {
   static const _activeStatus = 'ONLINE';
 
+  // ระยะที่ไรเดอร์ต้องขยับ (เมตร) ก่อนที่ stream จะยิงตำแหน่งใหม่มาให้
+  static const _locationDistanceFilterMeters = 20;
+
   static const _statusLabels = {
     'waiting_pickup': 'รอรับผ้า',
     'waiting_delivery': 'รอส่งผ้า',
@@ -76,6 +79,9 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
   String? _riderStatus;
   StreamSubscription<DocumentSnapshot>? _riderStatusSub;
 
+  // subscription สำหรับติดตามตำแหน่งไรเดอร์แบบ real-time
+  StreamSubscription<Position>? _positionStreamSub;
+
   List<_OrderItem> _cachedOrders = [];
   bool _enriching = false;
   List<String> _lastDocIds = [];
@@ -91,6 +97,7 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
   @override
   void dispose() {
     _riderStatusSub?.cancel();
+    _positionStreamSub?.cancel();
     super.dispose();
   }
 
@@ -137,6 +144,7 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
       }
       if (!await Geolocator.isLocationServiceEnabled()) return;
 
+      // ใช้ last known position ก่อน เพื่อให้มีระยะทางแสดงผลทันทีระหว่างรอ GPS fix
       final last = await Geolocator.getLastKnownPosition();
       if (last != null && mounted) {
         setState(() {
@@ -146,18 +154,36 @@ class _RiderHomeScreenState extends State<RiderHomeScreen> {
         if (_cachedOrders.isNotEmpty) _recomputeDistances();
       }
 
-      final current = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
-      if (!mounted) return;
-      setState(() {
-        _lat = current.latitude;
-        _lng = current.longitude;
-      });
-      _recomputeDistances();
+      // เริ่มติดตามตำแหน่งแบบ real-time
+      _startPositionStream();
     } catch (e) {
       log('initLocation error: $e');
     }
+  }
+
+  void _startPositionStream() {
+    _positionStreamSub?.cancel();
+
+    final locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: _locationDistanceFilterMeters,
+    );
+
+    _positionStreamSub = Geolocator.getPositionStream(
+      locationSettings: locationSettings,
+    ).listen(
+      (position) {
+        if (!mounted) return;
+        setState(() {
+          _lat = position.latitude;
+          _lng = position.longitude;
+        });
+        _recomputeDistances();
+      },
+      onError: (e) {
+        log('positionStream error: $e');
+      },
+    );
   }
 
   Future<String?> _loadSession() async {

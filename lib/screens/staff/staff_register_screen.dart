@@ -267,7 +267,7 @@ class _StaffRegisterScreenState extends State<StaffRegisterScreen> {
               ),
               const SizedBox(height: 18),
               const Text(
-                'เพิ่มพนักงานสำเร็จ!',
+                'เพิ่มพนักงานซักอบสำเร็จ!',
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w900,
@@ -522,7 +522,7 @@ class _StaffRegisterScreenState extends State<StaffRegisterScreen> {
           _sectionLabel('รูปโปรไฟล์'),
           const SizedBox(height: 8),
           Text(
-            'เพิ่มรูปถ่ายพนักงาน',
+            'เพิ่มรูปถ่ายพนักงานซักอบ',
             style: TextStyle(
               fontSize: 12.5,
               color: Colors.black.withOpacity(0.45),

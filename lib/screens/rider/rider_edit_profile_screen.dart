@@ -489,7 +489,7 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
                         Text(
                           _controllers['fullName']!.text.isNotEmpty
                               ? _controllers['fullName']!.text
-                              : 'พนักงานจัดส่ง',
+                              : 'พนักงานรับส่ง',
                           style: const TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.w700,
@@ -575,6 +575,19 @@ class _EditRiderScreenState extends State<EditRiderScreen> {
                               setState(() => _vehicleType = value);
                             }
                           },
+                        ),
+                        const SizedBox(height: 14),
+                        TextFormField(
+                          controller: _controllers['licensePlate'],
+                          decoration: _inputDecoration(
+                            label: 'ทะเบียนรถ',
+                            icon: Icons.credit_card_outlined,
+                            hintText: 'เช่น 1กข 1234',
+                          ),
+                          textCapitalization: TextCapitalization.characters,
+                          validator: (v) => v!.trim().isEmpty
+                              ? 'กรุณากรอกทะเบียนรถ'
+                              : null,
                         ),
                       ],
                     ),

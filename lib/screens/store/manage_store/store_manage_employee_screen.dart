@@ -409,7 +409,7 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
                   _buildSearchBar(),
                   const SizedBox(height: 18),
                   _buildSection(
-                    title: 'รายชื่อพนักงาน Rider',
+                    title: 'รายชื่อพนักงานรับส่ง',
                     count: riders.length,
                     tint: _Palette.primaryTint,
                     iconColor: _Palette.primary,
@@ -419,8 +419,8 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
                     _buildEmptyState(
                       icon: Icons.delivery_dining_rounded,
                       message: _searchController.text.isEmpty
-                          ? 'ยังไม่มี Rider ในร้านนี้'
-                          : 'ไม่พบ Rider ที่ตรงกับคำค้นหา',
+                          ? 'ยังไม่มี พนักงานรับส่ง ในร้านนี้'
+                          : 'ไม่พบ พนักงานรับส่ง ที่ตรงกับคำค้นหา',
                     )
                   else
                     ...riders.map((r) => _buildRiderCard(r)),

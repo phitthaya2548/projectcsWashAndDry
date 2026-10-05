@@ -81,27 +81,12 @@ class _ResetPasswordWithEmailOtpScreenState
     return null;
   }
 
+  // เหลือเงื่อนไขเดียว: ความยาวขั้นต่ำ 6 ตัวอักษร
+  // (ตัดเงื่อนไข ตัวพิมพ์ใหญ่ / ตัวพิมพ์เล็ก / ตัวเลข / อักขระพิเศษ ออก)
   List<_PasswordRule> get passwordRules => [
         _PasswordRule(
-          label: 'อย่างน้อย 8 ตัวอักษร',
-          isValid: newPassCtl.text.length >= 8,
-        ),
-        _PasswordRule(
-          label: 'ตัวพิมพ์ใหญ่',
-          isValid: RegExp(r'[A-Z]').hasMatch(newPassCtl.text),
-        ),
-        _PasswordRule(
-          label: 'ตัวพิมพ์เล็ก',
-          isValid: RegExp(r'[a-z]').hasMatch(newPassCtl.text),
-        ),
-        _PasswordRule(
-          label: 'ตัวเลข',
-          isValid: RegExp(r'[0-9]').hasMatch(newPassCtl.text),
-        ),
-        _PasswordRule(
-          label: 'อักขระพิเศษ',
-          isValid: RegExp(r'[!@#\$%^&*()_+\-=\[\]{};:"\\|,.<>\/?]')
-              .hasMatch(newPassCtl.text),
+          label: 'อย่างน้อย 6 ตัวอักษร',
+          isValid: newPassCtl.text.length >= 6,
         ),
       ];
 
@@ -116,7 +101,7 @@ class _ResetPasswordWithEmailOtpScreenState
     }
 
     if (!isPasswordStrongEnough) {
-      return 'รหัสผ่านยังไม่ตรงตามเงื่อนไขความปลอดภัย';
+      return 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร';
     }
 
     return null;
@@ -228,7 +213,7 @@ class _ResetPasswordWithEmailOtpScreenState
     if (!_formKey.currentState!.validate()) return;
 
     if (!isPasswordStrongEnough) {
-      showMessage('รหัสผ่านยังไม่ตรงตามเงื่อนไขความปลอดภัย');
+      showMessage('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร');
       return;
     }
 
@@ -717,7 +702,7 @@ class _ResetPasswordWithEmailOtpScreenState
           validator: passwordValidator,
           decoration: inputDecoration(
             label: 'รหัสผ่านใหม่',
-            hint: 'อย่างน้อย 8 ตัวอักษร',
+            hint: 'อย่างน้อย 6 ตัวอักษร',
             icon: Icons.lock_outline_rounded,
             suffixIcon: IconButton(
               onPressed: () =>
@@ -749,7 +734,7 @@ class _ResetPasswordWithEmailOtpScreenState
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'ต้องมีอย่างน้อย 8 ตัว, ตัวพิมพ์ใหญ่, ตัวพิมพ์เล็ก, ตัวเลข, สัญลักษณ์',
+                  'ต้องมีอย่างน้อย 6 ตัวอักษร',
                   style: TextStyle(
                     fontSize: 12,
                     color: isPasswordStrongEnough

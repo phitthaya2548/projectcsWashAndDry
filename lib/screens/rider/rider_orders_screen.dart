@@ -1,4 +1,3 @@
-
 import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
@@ -1346,10 +1345,6 @@ class _ActiveTabState extends State<_ActiveTab> {
     final statusLabel =
         step?.label ?? order.status;
 
-    final distanceText = order.distanceKm != null
-        ? '${order.distanceKm} กม.'
-        : 'กำลังหาตำแหน่ง...';
-
     final hasActionStep = step != null;
     final needsPhoto = step?.needsPhoto ?? false;
 
@@ -1416,12 +1411,6 @@ class _ActiveTabState extends State<_ActiveTab> {
                 _blue,
                 small: true,
                 isService: true,
-              ),
-              const Spacer(),
-              _chip(
-                distanceText,
-                _blue,
-                small: true,
               ),
             ],
           ),
@@ -1546,4 +1535,3 @@ class _ActiveTabState extends State<_ActiveTab> {
     );
   }
 }
-

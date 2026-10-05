@@ -332,7 +332,7 @@ class _RiderRegisterScreenState extends State<RiderRegisterScreen> {
               ),
               const SizedBox(height: 18),
               const Text(
-                'เพิ่มพนักงานสำเร็จ!',
+                'เพิ่มพนักงานรับส่งสำเร็จ!',
                 style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.w900,
@@ -341,7 +341,7 @@ class _RiderRegisterScreenState extends State<RiderRegisterScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'บัญชีพนักงานจัดส่งพร้อมใช้งานแล้ว',
+                'บัญชีพนักงานรับส่งพร้อมใช้งานแล้ว',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 13.5,
@@ -442,7 +442,7 @@ class _RiderRegisterScreenState extends State<RiderRegisterScreen> {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'สร้างบัญชีพนักงานจัดส่ง',
+                            'สร้างบัญชีพนักงานรับส่ง',
                             style: TextStyle(
                               fontSize: 14.5,
                               color: Colors.black.withOpacity(0.45),
@@ -637,7 +637,7 @@ class _RiderRegisterScreenState extends State<RiderRegisterScreen> {
         _stepHeader(
           icon: Icons.badge_outlined,
           title: 'ข้อมูลส่วนตัว',
-          subtitle: 'กรอกข้อมูลติดต่อและรูปถ่ายของพนักงานจัดส่ง',
+          subtitle: 'กรอกข้อมูลติดต่อและรูปถ่ายของพนักงานรับส่ง',
         ),
         const SizedBox(height: 18),
         _field(
@@ -692,7 +692,7 @@ class _RiderRegisterScreenState extends State<RiderRegisterScreen> {
         _stepHeader(
           icon: Icons.delivery_dining_outlined,
           title: 'ข้อมูลยานพาหนะ',
-          subtitle: 'ระบุรถที่ใช้สำหรับจัดส่ง',
+          subtitle: 'ระบุรถที่ใช้สำหรับงง',
         ),
         const SizedBox(height: 18),
         _vehicleDropdown(),
