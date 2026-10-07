@@ -135,14 +135,14 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
         }
         _showSnack(
           title: 'สำเร็จ',
-          message: data['message'] ?? 'ลบ Rider สำเร็จ',
+          message: data['message'] ?? 'ลบ พนักงานรับส่ง สำเร็จ',
           success: true,
         );
         await _loadData();
       } else {
         _showSnack(
           title: 'ข้อผิดพลาด',
-          message: data['message'] ?? 'ลบ Rider ไม่สำเร็จ',
+          message: data['message'] ?? 'ลบ พนักงานรับส่ง ไม่สำเร็จ',
           success: false,
         );
       }
@@ -707,7 +707,7 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
           IconButton(
             onPressed: () {
               _showDeleteDialog(
-                title: 'ยืนยันการลบ Rider',
+                title: 'ยืนยันการลบ พนักงานรับส่ง',
                 name: rider.fullName,
                 onConfirm: () => _deleteRider(rider.id),
               );

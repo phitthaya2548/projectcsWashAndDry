@@ -192,7 +192,7 @@ Widget buildMapCard() {
   if (customerLat == null || customerLng == null) {
     return buildCard(
       Icons.map_rounded,
-      'ตำแหน่งลูกค้าและไรเดอร์',
+      'ตำแหน่งลูกค้าและพนักงานรับส่ง',
       const Text(
         'ไม่มีพิกัดลูกค้า',
         style: TextStyle(fontSize: 14, color: Colors.black54),
@@ -226,8 +226,8 @@ Widget buildMapCard() {
         markerId: const MarkerId('rider_current_location'),
         position: riderPosition,
         infoWindow: const InfoWindow(
-          title: 'ไรเดอร์',
-          snippet: 'ตำแหน่งปัจจุบันของไรเดอร์',
+          title: 'พนักงานรับส่ง',
+          snippet: 'ตำแหน่งปัจจุบันของพนักงานรับส่ง',
         ),
         icon: BitmapDescriptor.defaultMarkerWithHue(
           BitmapDescriptor.hueAzure,
@@ -241,7 +241,7 @@ Widget buildMapCard() {
 
   return buildCard(
     Icons.map_rounded,
-    'ตำแหน่งลูกค้าและไรเดอร์',
+    'ตำแหน่งลูกค้าและพนักงานรับส่ง',
     SizedBox(
       height: 280,
       child: ClipRRect(

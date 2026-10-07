@@ -249,7 +249,7 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
       if (!mounted || version != _trackingVersion || !snap.exists) return;
 
       final d = snap.data() as Map<String, dynamic>?;
-      final name = (d?['fullname'] ?? d?['username'] ?? 'ไรเดอร์').toString();
+      final name = (d?['fullname'] ?? d?['username'] ?? 'พนักงานรับส่ง').toString();
       final image = d?['profile_image']?.toString();
       final icon = await _makeMarker(image, _blue);
 
@@ -525,12 +525,12 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
 
   String get _waitingText {
     const data = {
-      'waiting_pickup': 'กำลังรอไรเดอร์รับผ้ารับงาน...',
-      'waiting_delivery': 'กำลังรอไรเดอร์ส่งผ้ารับงาน...',
+      'waiting_pickup': 'กำลังรอพนักงานรับส่งรับผ้ารับงาน...',
+      'waiting_delivery': 'กำลังรอพนักงานรับส่งส่งผ้ารับงาน...',
       'completed': 'จัดส่งเรียบร้อยแล้ว',
       'cancelled': 'ออเดอร์ถูกยกเลิก',
     };
-    return data[_status] ?? 'ยังไม่มีไรเดอร์ที่ต้องติดตาม';
+    return data[_status] ?? 'ยังไม่มีพนักงานรับส่งที่ต้องติดตาม';
   }
 
   String _vehicleText(String value) {
@@ -549,7 +549,7 @@ class _CustomerMapScreenState extends State<CustomerMapScreen> {
       backgroundColor: const Color(0xFFF0F4F8),
       appBar: AppBar(
         title: const Text(
-          'ติดตามไรเดอร์',
+          'ติดตามพนักงานรับส่ง',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
         ),
         iconTheme: const IconThemeData(color: Colors.white),

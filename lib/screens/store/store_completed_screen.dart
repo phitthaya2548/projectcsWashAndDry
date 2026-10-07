@@ -305,7 +305,7 @@ class _StoreCompletedScreenState extends State<StoreCompletedScreen> {
                   if (o.riderPickup != null)
                     _buildPersonRow(
                       icon: Icons.directions_bike_rounded,
-                      role: 'ไรเดอร์รับผ้า',
+                      role: 'พนักงานรับส่ง',
                       fullname: o.riderPickup!.fullname,
                       phone: o.riderPickup!.phone,
                       vehicleType: o.riderPickup!.vehicleType,
@@ -320,7 +320,7 @@ class _StoreCompletedScreenState extends State<StoreCompletedScreen> {
                       ),
                     _buildPersonRow(
                       icon: Icons.local_laundry_service_rounded,
-                      role: 'พนักงานซัก',
+                      role: 'พนักงานซักอบ',
                       fullname: o.staff!.fullname,
                       phone: o.staff!.phone,
                       imageUrl: o.staff!.profileImage,
@@ -333,7 +333,7 @@ class _StoreCompletedScreenState extends State<StoreCompletedScreen> {
                     ),
                     _buildPersonRow(
                       icon: Icons.delivery_dining_rounded,
-                      role: 'ไรเดอร์ส่งผ้า',
+                      role: 'พนักงานรับส่ง',
                       fullname: o.riderDelivery!.fullname,
                       phone: o.riderDelivery!.phone,
                       vehicleType: o.riderDelivery!.vehicleType,

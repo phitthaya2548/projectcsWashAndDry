@@ -690,7 +690,7 @@ class _CustomerOrderDetailScreenState extends State<CustomerOrderDetailScreen> {
                   if (_riderPickup != null)
                     _person(
                       Icons.directions_bike_rounded,
-                      'ไรเดอร์รับผ้า',
+                      'พนักงานรับส่งรับ',
                       _riderPickup!,
                     ),
                   if (_staff != null) ...[
@@ -698,7 +698,7 @@ class _CustomerOrderDetailScreenState extends State<CustomerOrderDetailScreen> {
                       const Divider(height: 20, color: Color(0xFFE2E8F0)),
                     _person(
                       Icons.local_laundry_service_rounded,
-                      'พนักงานซัก',
+                      'พนักงานซักอบ',
                       _staff!,
                     ),
                   ],
@@ -707,7 +707,7 @@ class _CustomerOrderDetailScreenState extends State<CustomerOrderDetailScreen> {
                       const Divider(height: 20, color: Color(0xFFE2E8F0)),
                     _person(
                       Icons.delivery_dining_rounded,
-                      'ไรเดอร์ส่งผ้า',
+                      'พนักงานรับส่ง',
                       _riderDelivery!,
                     ),
                   ],

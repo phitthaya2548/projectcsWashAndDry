@@ -1334,7 +1334,7 @@ class _StoreDetailEmployeeScreenState extends State<StoreDetailEmployeeScreen> {
         title: 'แจ้งเตือน',
         message: sessionRole == null || sessionRole.isEmpty
             ? 'กรุณาเข้าสู่ระบบก่อนสมัคร'
-            : 'บัญชีนี้ไม่สามารถสมัครเป็น${role == 'rider' ? 'ไรเดอร์' : 'พนักงานซักอบ'}ได้',
+            : 'บัญชีนี้ไม่สามารถสมัครเป็น${role == 'rider' ? 'พนักงานรับส่ง' : 'พนักงานซักอบ'}ได้',
         type: _SnackType.warning,
       );
       return;

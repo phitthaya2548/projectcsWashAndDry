@@ -854,7 +854,7 @@ class _EmployeeReportScreenState extends State<EmployeeReportScreen> {
                     ),
                     const SizedBox(height: 3),
                     const Text(
-                      'Rider',
+                      'พนักงานรับส่ง',
                       style: TextStyle(fontSize: 12, color: Color(0xFF777777)),
                     ),
                   ],

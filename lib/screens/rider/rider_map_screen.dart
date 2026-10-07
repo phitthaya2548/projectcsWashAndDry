@@ -147,14 +147,14 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
 
     if (!mounted) return;
 
-    _riderName = await session.getFullname() ?? 'Rider';
+    _riderName = await session.getFullname() ?? 'พนักงานรับส่ง';
     _riderImage = await session.getProfileImage();
     _riderId = riderId;
 
     if (riderId == null) {
       setState(() {
         _loadingLocation = false;
-        _locationError = 'ไม่พบข้อมูลไรเดอร์';
+        _locationError = 'ไม่พบข้อมูลพนักงานรับส่ง';
       });
       return;
     }
@@ -244,7 +244,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
         accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 5,
         foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationTitle: 'กำลังแชร์ตำแหน่งไรเดอร์',
+          notificationTitle: 'กำลังแชร์ตำแหน่งพนักงานรับส่ง',
           notificationText: 'แอปกำลังอัปเดตตำแหน่งของคุณให้ลูกค้า',
           enableWakeLock: true,
         ),

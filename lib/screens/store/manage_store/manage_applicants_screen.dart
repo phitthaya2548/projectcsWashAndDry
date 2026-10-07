@@ -402,7 +402,7 @@ class _ManageApplicantsScreenState extends State<ManageApplicantsScreen> {
                     else ...[
                       if (_riders.isNotEmpty) ...[
                         _sectionHeader(
-                          title: 'ไรเดอร์',
+                          title: 'พนักงานรับส่ง',
                           count: _riders.length,
  
                         ),
@@ -416,7 +416,7 @@ class _ManageApplicantsScreenState extends State<ManageApplicantsScreen> {
                             email: item.email,
                             profileImage: item.profileImage,
                             appliedAt: item.appliedAt,
-                            roleLabel: 'ไรเดอร์',
+                            roleLabel: 'พนักงานรับส่ง',
                             vehicleType: item.vehicleType,
                             licensePlate: item.licensePlate,
                           ),
