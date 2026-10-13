@@ -305,10 +305,10 @@ class _StoreCompletedScreenState extends State<StoreCompletedScreen> {
                   if (o.riderPickup != null)
                     _buildPersonRow(
                       icon: Icons.directions_bike_rounded,
-                      role: 'พนักงานรับส่ง',
+                      role: 'พนักงานรับส่งส่งผ้า',
                       fullname: o.riderPickup!.fullname,
                       phone: o.riderPickup!.phone,
-                      vehicleType: o.riderPickup!.vehicleType,
+                      vehicleType: o.riderDelivery?.vehicleType == 'car' ? 'รถยนต์' : 'มอเตอร์ไซค์',
                       imageUrl: o.riderPickup!.profileImage,
                       extra: o.riderPickup!.licensePlate,
                     ),
@@ -333,10 +333,10 @@ class _StoreCompletedScreenState extends State<StoreCompletedScreen> {
                     ),
                     _buildPersonRow(
                       icon: Icons.delivery_dining_rounded,
-                      role: 'พนักงานรับส่ง',
+                      role: 'พนักงานรับส่งรับผ้า',
                       fullname: o.riderDelivery!.fullname,
                       phone: o.riderDelivery!.phone,
-                      vehicleType: o.riderDelivery!.vehicleType,
+                      vehicleType: o.riderDelivery?.vehicleType == 'car' ? 'รถยนต์' : 'มอเตอร์ไซค์',
                       imageUrl: o.riderDelivery!.profileImage,
                       extra: o.riderDelivery!.licensePlate,
                     ),
@@ -363,8 +363,6 @@ class _StoreCompletedScreenState extends State<StoreCompletedScreen> {
       ),
     );
   }
-
-  // ─── Header ───────────────────────────────────────────────────────────────
 
   Widget _buildOrderHeader(StoreCompletedOrder o, String dateStr) {
     return Container(
@@ -418,7 +416,7 @@ class _StoreCompletedScreenState extends State<StoreCompletedScreen> {
     );
   }
 
-  // ─── Section card ─────────────────────────────────────────────────────────
+
 
   Widget _buildSection({
     required IconData icon,
@@ -504,7 +502,7 @@ class _StoreCompletedScreenState extends State<StoreCompletedScreen> {
     );
   }
 
-  // ─── Person row ───────────────────────────────────────────────────────────
+
 
   Widget _buildPersonRow({
     required IconData icon,
@@ -598,7 +596,7 @@ class _StoreCompletedScreenState extends State<StoreCompletedScreen> {
     );
   }
 
-  // ─── Image box ────────────────────────────────────────────────────────────
+
 
   Widget _buildImageBox(String? imageUrl, String label) {
     final hasImage = imageUrl != null && imageUrl.isNotEmpty;

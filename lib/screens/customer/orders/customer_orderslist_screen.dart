@@ -198,7 +198,7 @@ class _OrdersListScreenState extends State<OrdersListScreen> with SingleTickerPr
         'waiting_delivery': 'รอส่งผ้า',
         'delivery_heading_to_shop': 'กำลังไปรับผ้าที่ร้าน',
         'delivery_pickup_completed': 'รับผ้าที่ร้านแล้ว',
-        'store_pickup_in_progress': 'กำลังรับผ้าที่ร้าน',
+        'store_pickup_in_progress': 'กำลังรับผ้าที่ร้าน','store_pickup_in_progress': 'กำลังรับผ้าที่ร้าน',
         'delivery_in_progress': 'กำลังจัดส่ง',
         'completed': 'เสร็จสิ้น',
         'cancelled': 'ยกเลิก',

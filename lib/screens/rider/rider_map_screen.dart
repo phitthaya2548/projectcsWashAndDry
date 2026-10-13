@@ -198,7 +198,7 @@ class _RiderMapScreenState extends State<RiderMapScreen> {
     if (lat == null || lng == null) {
       setState(() {
         _loadingLocation = false;
-        _locationError = 'ยังไม่มีตำแหน่งของไรเดอร์ในระบบ';
+        _locationError = 'ยังไม่มีตำแหน่งของพนักงานรับส่งในระบบ';
       });
       return;
     }

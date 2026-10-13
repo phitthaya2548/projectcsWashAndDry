@@ -62,6 +62,7 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
   final Map<String, Timestamp> _liveDatetimes = {};
 
   DateTime? _historySelectedDate;
+  bool _historyMonthMode = false;
 
   static const _activeStatuses = {
     'pending_confirmation',
@@ -81,7 +82,6 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
     'store_pickup_in_progress',
     'delivery_in_progress',
   };
-
 
   static const _doneStatuses = {'completed'};
   static const _cancelStatuses = {'cancelled'};
@@ -224,7 +224,9 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
       final selectedDate = _historySelectedDate;
 
       if (selectedDate != null) {
-        queryParameters['day'] = selectedDate.day.toString();
+        if (!_historyMonthMode) {
+          queryParameters['day'] = selectedDate.day.toString();
+        }
         queryParameters['month'] = selectedDate.month.toString();
         queryParameters['year'] = selectedDate.year.toString();
       }
@@ -325,7 +327,7 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
     }
   }
 
-   String _statusLabel(String status) {
+  String _statusLabel(String status) {
     return {
           'pending_confirmation': 'รอยืนยันคำสั่งซื้อ',
           'waiting_payment': 'รอชำระเงิน',
@@ -385,6 +387,10 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
 
   String _formatDateOnly(DateTime dt) => '${dt.day} ${_months[dt.month]} ${dt.year + 543}';
 
+  String _historyLabel(DateTime d) => _historyMonthMode
+      ? '${_months[d.month]} ${d.year + 543}'
+      : _formatDateOnly(d);
+
   String _formatDate(Map<String, dynamic>? raw) {
     if (raw == null) return '-';
     final seconds = raw['_seconds'];
@@ -417,84 +423,24 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
     if (dt == null) return false;
     return dt.year == selectedDate.year &&
         dt.month == selectedDate.month &&
-        dt.day == selectedDate.day;
+        (_historyMonthMode || dt.day == selectedDate.day);
   }
 
   Future<void> _pickHistoryDate() async {
-    final now = DateTime.now();
-    final initialDate = _historySelectedDate ?? now;
-
-    final result = await showCalendarDatePicker2Dialog(
+    final result = await showDialog<_HistoryFilter>(
       context: context,
-      value: [initialDate.isAfter(now) ? now : initialDate],
-      dialogSize: const Size(340, 430),
-      borderRadius: BorderRadius.circular(24),
-      dialogBackgroundColor: Colors.white,
       barrierColor: Colors.black.withOpacity(0.35),
-      config: CalendarDatePicker2WithActionButtonsConfig(
-        calendarType: CalendarDatePicker2Type.single,
-        firstDate: DateTime(now.year - 5, 1, 1),
-        lastDate: now,
-        currentDate: now,
-        firstDayOfWeek: 1,
-        centerAlignModePicker: true,
-        closeDialogOnCancelTapped: true,
-        closeDialogOnOkTapped: true,
-        selectedDayHighlightColor: _primary,
-        controlsTextStyle: const TextStyle(
-          color: _dark,
-          fontSize: 16,
-          fontWeight: FontWeight.w700,
-        ),
-        dayTextStyle: const TextStyle(
-          color: _dark,
-          fontSize: 14,
-          fontWeight: FontWeight.w500,
-        ),
-        selectedDayTextStyle: const TextStyle(
-          color: Colors.white,
-          fontSize: 14,
-          fontWeight: FontWeight.w700,
-        ),
-        todayTextStyle: const TextStyle(
-          color: _primary,
-          fontSize: 14,
-          fontWeight: FontWeight.w700,
-        ),
-        weekdayLabelTextStyle: const TextStyle(
-          color: Color(0xFF94A3B8),
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
-        yearTextStyle: const TextStyle(
-          color: _dark,
-          fontSize: 14,
-          fontWeight: FontWeight.w500,
-        ),
-        selectedYearTextStyle: const TextStyle(
-          color: Colors.white,
-          fontSize: 14,
-          fontWeight: FontWeight.w700,
-        ),
-        cancelButtonTextStyle: const TextStyle(
-          color: Color(0xFF64748B),
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-        ),
-        okButtonTextStyle: const TextStyle(
-          color: _primary,
-          fontSize: 14,
-          fontWeight: FontWeight.w700,
-        ),
+      builder: (_) => _HistoryDateDialog(
+        initial: _historySelectedDate ?? DateTime.now(),
+        initialMonthMode: _historyMonthMode,
       ),
     );
 
-    if (result == null || result.isEmpty || result.first == null) return;
-
-    final picked = result.first!;
+    if (result == null) return;
 
     setState(() {
-      _historySelectedDate = DateTime(picked.year, picked.month, picked.day);
+      _historySelectedDate = result.date;
+      _historyMonthMode = result.monthMode;
     });
 
     await _fetchHistory();
@@ -503,6 +449,7 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
   Future<void> _clearHistoryDate() async {
     setState(() {
       _historySelectedDate = null;
+      _historyMonthMode = false;
     });
     await _fetchHistory();
   }
@@ -541,7 +488,7 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
                       tabs: const [
                         Tab(text: 'กำลังดำเนินการ'),
                         Tab(text: 'เสร็จสิ้น'),
-                        Tab(text: 'ยกเลิก/ล้มเหลว'),
+                        Tab(text: 'ยกเลิก'),
                       ],
                     ),
                   ),
@@ -701,8 +648,8 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
                           children: [
                             Text(
                               selectedDate == null
-                                  ? 'เลือกวัน เดือน ปี'
-                                  : _formatDateOnly(selectedDate),
+                                  ? 'เลือกวัน / เดือน'
+                                  : _historyLabel(selectedDate),
                               style: const TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w700,
@@ -713,7 +660,9 @@ class _StoreOrdersScreenState extends State<StoreOrdersScreen>
                             Text(
                               selectedDate == null
                                   ? 'แตะเพื่อเปิดปฏิทิน'
-                                  : 'แตะเพื่อเปลี่ยนวันที่',
+                                  : (_historyMonthMode
+                                      ? 'ดูทั้งเดือน • แตะเพื่อเปลี่ยน'
+                                      : 'แตะเพื่อเปลี่ยนวันที่'),
                               style: const TextStyle(
                                 fontSize: 11,
                                 color: Colors.black45,
@@ -1040,6 +989,276 @@ class _PulsingDotState extends State<_PulsingDot> {
           height: 7,
           margin: const EdgeInsets.only(right: 6),
           decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+        ),
+      ),
+    );
+  }
+}
+
+// ───────────────────────── Date filter dialog (รายวัน / รายเดือน) ─────────────────────────
+
+class _HistoryFilter {
+  final DateTime date;
+  final bool monthMode;
+  const _HistoryFilter(this.date, this.monthMode);
+}
+
+class _HistoryDateDialog extends StatefulWidget {
+  const _HistoryDateDialog({
+    required this.initial,
+    required this.initialMonthMode,
+  });
+
+  final DateTime initial;
+  final bool initialMonthMode;
+
+  @override
+  State<_HistoryDateDialog> createState() => _HistoryDateDialogState();
+}
+
+class _HistoryDateDialogState extends State<_HistoryDateDialog> {
+  static const _primary = Color(0xFF1E88E5);
+  static const _dark = Color(0xFF1A1A2E);
+
+  static const _months = [
+    '', 'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+    'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม',
+  ];
+  static const _monthsShort = [
+    '', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+    'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.',
+  ];
+
+  final DateTime _now = DateTime.now();
+  late bool _monthMode = widget.initialMonthMode;
+  late DateTime _day = widget.initial.isAfter(_now) ? _now : widget.initial;
+  late int _year = _day.year;
+  late int _month = _day.month;
+
+  Widget _segment(String label, bool selected, VoidCallback onTap) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 11),
+          decoration: BoxDecoration(
+            color: selected ? _primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: selected ? Colors.white : _dark,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _dayPicker() {
+    return SizedBox(
+      height: 330,
+      child: CalendarDatePicker2(
+        value: [_day],
+        onValueChanged: (v) {
+          if (v.isNotEmpty && v.first != null) {
+            setState(() {
+              _day = v.first!;
+              _year = _day.year;
+              _month = _day.month;
+            });
+          }
+        },
+        config: CalendarDatePicker2Config(
+          calendarType: CalendarDatePicker2Type.single,
+          firstDate: DateTime(_now.year - 5, 1, 1),
+          lastDate: _now,
+          currentDate: _now,
+          firstDayOfWeek: 1,
+          centerAlignModePicker: true,
+          selectedDayHighlightColor: _primary,
+          controlsTextStyle: const TextStyle(
+              color: _dark, fontSize: 16, fontWeight: FontWeight.w700),
+          dayTextStyle: const TextStyle(
+              color: _dark, fontSize: 14, fontWeight: FontWeight.w500),
+          selectedDayTextStyle: const TextStyle(
+              color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700),
+          todayTextStyle: const TextStyle(
+              color: _primary, fontSize: 14, fontWeight: FontWeight.w700),
+          weekdayLabelTextStyle: const TextStyle(
+              color: Color(0xFF94A3B8), fontSize: 12, fontWeight: FontWeight.w600),
+          yearTextStyle: const TextStyle(
+              color: _dark, fontSize: 14, fontWeight: FontWeight.w500),
+          selectedYearTextStyle: const TextStyle(
+              color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700),
+          weekdayLabels: const ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'],
+          modePickerTextHandler: ({required monthDate, isMonthPicker}) {
+            return (isMonthPicker ?? false)
+                ? _months[monthDate.month]
+                : '${monthDate.year + 543}';
+          },
+          monthBuilder: ({
+            required month,
+            decoration,
+            isCurrentMonth,
+            isDisabled,
+            isSelected,
+            textStyle,
+          }) =>
+              Container(
+            decoration: decoration,
+            child: Center(child: Text(_monthsShort[month], style: textStyle)),
+          ),
+          yearBuilder: ({
+            required year,
+            decoration,
+            isCurrentYear,
+            isDisabled,
+            isSelected,
+            textStyle,
+          }) =>
+              Container(
+            decoration: decoration,
+            child: Center(child: Text('${year + 543}', style: textStyle)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _monthPicker() {
+    final minYear = _now.year - 5;
+    final canPrev = _year > minYear;
+    final canNext = _year < _now.year;
+
+    return SizedBox(
+      height: 330,
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              IconButton(
+                onPressed: canPrev ? () => setState(() => _year--) : null,
+                icon: const Icon(Icons.chevron_left_rounded),
+              ),
+              Text(
+                '${_year + 543}',
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w700, color: _dark),
+              ),
+              IconButton(
+                onPressed: canNext ? () => setState(() => _year++) : null,
+                icon: const Icon(Icons.chevron_right_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: GridView.builder(
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: 12,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                mainAxisSpacing: 10,
+                crossAxisSpacing: 10,
+                childAspectRatio: 1.6,
+              ),
+              itemBuilder: (_, i) {
+                final m = i + 1;
+                final disabled = _year == _now.year && m > _now.month;
+                final selected = m == _month;
+                return GestureDetector(
+                  onTap: disabled ? null : () => setState(() => _month = m),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: selected ? _primary : const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      _monthsShort[m],
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: disabled
+                            ? const Color(0xFFCBD5E1)
+                            : selected
+                                ? Colors.white
+                                : _dark,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 360),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  children: [
+                    _segment('รายวัน', !_monthMode,
+                        () => setState(() => _monthMode = false)),
+                    _segment('รายเดือน', _monthMode,
+                        () => setState(() => _monthMode = true)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              _monthMode ? _monthPicker() : _dayPicker(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('ยกเลิก',
+                        style: TextStyle(
+                            color: Color(0xFF64748B),
+                            fontWeight: FontWeight.w600)),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      final result = _monthMode
+                          ? _HistoryFilter(DateTime(_year, _month, 1), true)
+                          : _HistoryFilter(
+                              DateTime(_day.year, _day.month, _day.day), false);
+                      Navigator.pop(context, result);
+                    },
+                    child: const Text('ตกลง',
+                        style: TextStyle(
+                            color: _primary, fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

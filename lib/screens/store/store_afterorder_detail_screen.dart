@@ -596,7 +596,7 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
                       const Divider(height: 20, color: Color(0xFFE2E8F0)),
                     _person(
                       Icons.local_laundry_service_rounded,
-                      'พนักงานซัก',
+                      'พนักงานซักอบ',
                       staff,
                     ),
                   ],
@@ -771,11 +771,7 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            Icons.confirmation_number_outlined,
-                            size: 12,
-                            color: Colors.grey.shade400,
-                          ),
+                          
                           const SizedBox(width: 4),
                           Text(
                             'ทะเบียนรถ ${data['license_plate']}',
@@ -786,25 +782,27 @@ class _StoreOrderDetailScreenState extends State<StoreOrderDetailScreen> {
                           ),
                         ],
                       ),
-                    if (data['vehicle_type'] != null)
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.directions_car_rounded,
-                            size: 12,
-                            color: Colors.grey.shade400,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            data['vehicle_type'].toString(),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade500,
-                            ),
-                          ),
-                        ],
-                      ),
+                   if (data['vehicle_type'] != null)
+  Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(
+        data['vehicle_type'] == 'car'
+            ? Icons.directions_car_rounded
+            : Icons.motorcycle_rounded,
+        size: 12,
+        color: Colors.grey.shade400,
+      ),
+      const SizedBox(width: 4),
+      Text(
+        data['vehicle_type'] == 'car' ? 'รถยนต์' : 'มอเตอร์ไซค์',
+        style: TextStyle(
+          fontSize: 12,
+          color: Colors.grey.shade500,
+        ),
+      ),
+    ],
+  ),
                   ],
                 ),
               ],

@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
 import 'dart:math' hide log;
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
@@ -94,13 +93,6 @@ String _serviceLabel(String? type) => switch (type) {
   'wash_dry' => 'ซัก + อบ',
   _ => type ?? '-',
 };
-
-String _formatTs(Timestamp ts) {
-  final d = ts.toDate().toLocal();
-  return '${d.day}/${d.month}/${d.year + 543} '
-      '${d.hour.toString().padLeft(2, '0')}:'
-      '${d.minute.toString().padLeft(2, '0')} น.';
-}
 
 double? _calcDistance(
   double? lat1,
@@ -489,6 +481,8 @@ Widget _successDialog(String message) {
   );
 }
 
+// ═══════════════════════════ Screen ═══════════════════════════
+
 class RiderOrdersScreen extends StatefulWidget {
   const RiderOrdersScreen({super.key});
 
@@ -571,7 +565,7 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen>
               indicatorSize: TabBarIndicatorSize.tab,
               tabs: const [
                 Tab(text: 'กำลังดำเนินการ'),
-                Tab(text: 'งานที่ทำเสร็จแล้ว'),
+                Tab(text: 'ดำเนินการเสร็จสิ้น'),
               ],
             ),
           ),
@@ -586,6 +580,7 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen>
                       ),
                       _CompletedTab(
                         riderId: _riderId!,
+                        apiUrl: _apiUrl!,
                       ),
                     ]
                   : List.generate(
@@ -604,188 +599,256 @@ class _RiderOrdersScreenState extends State<RiderOrdersScreen>
   }
 }
 
-class _CompletedTab extends StatelessWidget {
+// ───────────────────────── Date filter model ─────────────────────────
+
+const _thMonths = [
+  'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน', 'พฤษภาคม', 'มิถุนายน',
+  'กรกฎาคม', 'สิงหาคม', 'กันยายน', 'ตุลาคม', 'พฤศจิกายน', 'ธันวาคม',
+];
+
+const _thMonthsShort = [
+  'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+  'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.',
+];
+
+class _DateFilter {
+  final int year; // ค.ศ.
+  final int month; // 1-12
+  final int? day; // null = กรองรายเดือน
+
+  const _DateFilter({
+    required this.year,
+    required this.month,
+    this.day,
+  });
+
+  bool get isMonth => day == null;
+
+  String get label => isMonth
+      ? '${_thMonths[month - 1]} ${year + 543}'
+      : '$day ${_thMonthsShort[month - 1]} ${year + 543}';
+}
+
+// ───────────────────────── Status label/color ─────────────────────────
+
+({String label, Color color}) _doneStatusInfo(String status) {
+  switch (status) {
+    case 'completed':
+      return (label: 'เสร็จสิ้น', color: _green);
+    case 'cancelled':
+      return (label: 'ยกเลิก', color: Colors.red);
+    case 'waiting_payment':
+      return (label: 'รอชำระเงิน', color: Colors.orange);
+    case 'payment_completed':
+      return (label: 'ชำระเงินแล้ว', color: _green);
+    case 'waiting_machine':
+      return (label: 'รอเครื่อง', color: _blue);
+    case 'waiting_wash':
+      return (label: 'รอซัก', color: _blue);
+    case 'washing':
+      return (label: 'กำลังซัก', color: _blue);
+    case 'waiting_dry':
+      return (label: 'รออบ', color: _blue);
+    case 'drying':
+      return (label: 'กำลังอบ', color: _blue);
+    default:
+      return (label: status, color: _textSecondary);
+  }
+}
+
+// ═══════════════════════════ Completed tab ═══════════════════════════
+
+class _CompletedTab extends StatefulWidget {
   final String riderId;
+  final String apiUrl;
 
   const _CompletedTab({
     required this.riderId,
+    required this.apiUrl,
   });
 
-  Future<Map<String, DocumentSnapshot>> _batchGet(
-    List<DocumentReference?> refs,
-  ) async {
-    final validRefs = refs.whereType<DocumentReference>().toList();
+  @override
+  State<_CompletedTab> createState() => _CompletedTabState();
+}
 
-    if (validRefs.isEmpty) return {};
-
-    final snapshots = await Future.wait(
-      validRefs.map((ref) => ref.get()),
-    );
-
-    return {
-      for (final snap in snapshots)
-        snap.reference.path: snap,
-    };
-  }
+class _CompletedTabState extends State<_CompletedTab> {
+  List<WorkOfRider> _orders = [];
+  bool _loading = true;
+  String? _error;
+  _DateFilter? _filter;
+  int _requestId = 0;
 
   @override
-  Widget build(BuildContext context) {
-    final riderRef = FirebaseFirestore.instance.doc(
-      'riders/$riderId',
+  void initState() {
+    super.initState();
+    _fetch();
+  }
+
+  Future<void> _fetch() async {
+    final reqId = ++_requestId;
+
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final params = <String, String>{'mode': 'done'};
+
+      final f = _filter;
+      if (f != null) {
+        params['year'] = f.year.toString();
+        params['month'] = f.month.toString();
+        if (f.day != null) params['day'] = f.day.toString();
+      }
+
+      final uri = Uri.parse(
+        '${widget.apiUrl}/order/rider/${widget.riderId}',
+      ).replace(queryParameters: params);
+
+      final res = await http.get(uri);
+
+      if (!mounted || reqId != _requestId) return;
+
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+
+      if (res.statusCode == 200 && body['ok'] == true) {
+        final list = (body['data'] as List)
+            .map((e) => WorkOfRider.fromJson(e as Map<String, dynamic>))
+            .toList()
+          ..sort((a, b) {
+            final da = a.orderDatetime;
+            final db = b.orderDatetime;
+            if (da == null && db == null) return 0;
+            if (da == null) return 1;
+            if (db == null) return -1;
+            return db.compareTo(da); // ใหม่สุดก่อน
+          });
+
+        setState(() {
+          _orders = list;
+          _loading = false;
+        });
+      } else {
+        setState(() {
+          _orders = [];
+          _error = body['message'] as String? ?? 'เกิดข้อผิดพลาด';
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      log('fetchDoneOrders: $e');
+
+      if (!mounted || reqId != _requestId) return;
+
+      setState(() {
+        _orders = [];
+        _error = 'ไม่สามารถเชื่อมต่อได้';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _pickDate() async {
+    final result = await showDialog<_DateFilter>(
+      context: context,
+      builder: (_) => _DateFilterDialog(initial: _filter),
     );
 
-    final ordersStream = FirebaseFirestore.instance
-        .collection('orders')
-        .where(
-          Filter.or(
-            Filter('rider_pickup_id', isEqualTo: riderRef),
-            Filter('rider_delivery_id', isEqualTo: riderRef),
-          ),
-        )
-        .where(
-          'status',
-          whereIn: [
-            _S.arrivedAtShop,
-            _S.waitingWash,
-            _S.waitingDry,
-            _S.completed,
-          ],
-        )
-        .orderBy(
-          'order_datetime',
-          descending: true,
-        )
-        .snapshots();
+    if (result == null) return;
 
-    return StreamBuilder<QuerySnapshot>(
-      stream: ordersStream,
-      builder: (_, snapshot) {
-        if (snapshot.connectionState ==
-            ConnectionState.waiting) {
-          return const Center(
-            child: CircularProgressIndicator(
-              color: _blue,
-            ),
-          );
-        }
+    setState(() => _filter = result);
+    _fetch();
+  }
 
-        if (snapshot.hasError) {
-          return _emptyState(
-            Icons.error_outline,
-            'เกิดข้อผิดพลาด',
-          );
-        }
+  void _clearFilter() {
+    setState(() => _filter = null);
+    _fetch();
+  }
 
-        final docs = snapshot.data?.docs ?? [];
+  Widget _filterBar() {
+    final hasFilter = _filter != null;
 
-        if (docs.isEmpty) {
-          return _emptyState(
-            Icons.inbox_outlined,
-            'ยังไม่มีงานที่ทำเสร็จแล้ว',
-          );
-        }
-
-        final customerRefs = docs
-            .map(
-              (d) => (d.data() as Map)['customer_id']
-                  as DocumentReference?,
-            )
-            .toList();
-
-        final addressRefs = docs
-            .map(
-              (d) => (d.data() as Map)['address_id']
-                  as DocumentReference?,
-            )
-            .toList();
-
-        return FutureBuilder(
-          future: Future.wait([
-            _batchGet(customerRefs),
-            _batchGet(addressRefs),
-          ]),
-          builder: (_, related) {
-            final customers =
-                related.data?[0]
-                    as Map<String, DocumentSnapshot>? ??
-                {};
-
-            final addresses =
-                related.data?[1]
-                    as Map<String, DocumentSnapshot>? ??
-                {};
-
-            final loadingRelated =
-                related.connectionState ==
-                ConnectionState.waiting;
-
-            return ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: docs.length,
-              separatorBuilder: (_, __) =>
-                  const SizedBox(height: 10),
-              itemBuilder: (_, i) => _buildOrderCard(
-                docs[i],
-                customers,
-                addresses,
-                loadingRelated,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Row(
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: _pickDate,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 8,
               ),
-            );
-          },
-        );
-      },
+              decoration: BoxDecoration(
+                color: hasFilter
+                    ? _blue.withOpacity(0.08)
+                    : const Color(0xFFF1F3F6),
+                borderRadius: BorderRadius.circular(20),
+                border: hasFilter
+                    ? Border.all(color: _blue.withOpacity(0.4))
+                    : null,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.calendar_month_outlined,
+                    size: 16,
+                    color: _blue,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    hasFilter ? _filter!.label : 'เลือกวันที่',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: hasFilter ? _blue : _textPrimary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (hasFilter) ...[
+            const SizedBox(width: 8),
+            InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: _clearFilter,
+              child: Container(
+                padding: const EdgeInsets.all(6),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFF1F3F6),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.close,
+                  size: 16,
+                  color: _textSecondary,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
-  Widget _buildOrderCard(
-    QueryDocumentSnapshot doc,
-    Map<String, DocumentSnapshot> customers,
-    Map<String, DocumentSnapshot> addresses,
-    bool loadingRelated,
-  ) {
-    final data = doc.data() as Map<String, dynamic>;
-    final status = data['status'] as String?;
+  Widget _buildOrderCard(WorkOfRider order) {
+    final info = _doneStatusInfo(order.status);
 
-    final isArrived = status == _S.arrivedAtShop;
-    final isWaiting =
-        status == _S.waitingWash ||
-        status == _S.waitingDry;
-
-    final color =
-        isArrived || isWaiting ? _blue : _green;
-
-    final label = isArrived
-        ? 'ถึงร้านแล้ว'
-        : (isWaiting ? 'รอซัก' : 'เสร็จสิ้น');
-
-    final shortId = doc.id
-        .substring(0, doc.id.length.clamp(0, 8))
+    final shortId = order.id
+        .substring(0, order.id.length.clamp(0, 8))
         .toUpperCase();
 
-    final customerRef =
-        data['customer_id'] as DocumentReference?;
-
-    final addressRef =
-        data['address_id'] as DocumentReference?;
-
-    final customer = customerRef != null
-        ? customers[customerRef.path]?.data()
-              as Map<String, dynamic>?
-        : null;
-
-    final address = addressRef != null
-        ? addresses[addressRef.path]?.data()
-              as Map<String, dynamic>?
-        : null;
-
     return _cardShell(
-      leftColor: color,
+      leftColor: info.color,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment:
-                MainAxisAlignment.spaceBetween,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 '#$shortId',
@@ -795,53 +858,31 @@ class _CompletedTab extends StatelessWidget {
                   color: _textPrimary,
                 ),
               ),
-              _chip(label, color),
+              _chip(info.label, info.color),
             ],
           ),
           const SizedBox(height: 12),
-          if (loadingRelated)
-            const SizedBox(
-              height: 20,
-              child: Center(
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: _blue,
-                ),
-              ),
-            )
-          else ...[
-            _customerRow(
-              customer?['fullname'],
-              customer?['phone'],
-              customer?['profile_image'],
-            ),
-            if (address?['address_text'] != null)
-              _addressRow(
-                address!['address_text'],
-              ),
-          ],
-          const SizedBox(height: 10),
-          const Divider(
-            height: 1,
-            color: _border,
+          _customerRow(
+            order.customer?.name,
+            order.customer?.phone,
+            order.customer?.profileImage,
           ),
+          if (order.address != null) _addressRow(order.address!),
+          const SizedBox(height: 10),
+          const Divider(height: 1, color: _border),
           const SizedBox(height: 10),
           Row(
             children: [
               _chip(
-                _serviceLabel(
-                  data['service_type'] as String?,
-                ),
+                _serviceLabel(order.serviceType),
                 _textSecondary,
                 small: true,
                 isService: true,
               ),
-              if (data['order_datetime'] != null) ...[
+              if (order.orderDatetime != null) ...[
                 const SizedBox(width: 8),
                 Text(
-                  _formatTs(
-                    data['order_datetime'] as Timestamp,
-                  ),
+                  _formatOrderDateTime(order.orderDatetime),
                   style: const TextStyle(
                     fontSize: 11,
                     color: _textSecondary,
@@ -854,7 +895,466 @@ class _CompletedTab extends StatelessWidget {
       ),
     );
   }
+
+  @override
+  Widget build(BuildContext context) {
+    Widget content;
+
+    if (_loading) {
+      content = const Center(
+        child: CircularProgressIndicator(color: _blue),
+      );
+    } else if (_error != null || _orders.isEmpty) {
+      content = _emptyState(
+        _error != null ? Icons.error_outline : Icons.inbox_outlined,
+        _error ??
+            (_filter != null
+                ? 'ไม่พบงานในช่วงที่เลือก'
+                : 'ยังไม่มีงานที่ทำเสร็จแล้ว'),
+        action: TextButton.icon(
+          onPressed: _fetch,
+          icon: const Icon(Icons.refresh, size: 18, color: _blue),
+          label: const Text(
+            'โหลดใหม่',
+            style: TextStyle(color: _blue),
+          ),
+        ),
+      );
+    } else {
+      content = RefreshIndicator(
+        color: _blue,
+        onRefresh: _fetch,
+        child: ListView.separated(
+          padding: const EdgeInsets.all(16),
+          itemCount: _orders.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 10),
+          itemBuilder: (_, i) => _buildOrderCard(_orders[i]),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        _filterBar(),
+        Expanded(child: content),
+      ],
+    );
+  }
 }
+
+// ───────────────────────── Date filter dialog ─────────────────────────
+
+class _DateFilterDialog extends StatefulWidget {
+  final _DateFilter? initial;
+
+  const _DateFilterDialog({this.initial});
+
+  @override
+  State<_DateFilterDialog> createState() => _DateFilterDialogState();
+}
+
+class _DateFilterDialogState extends State<_DateFilterDialog> {
+  static const _weekdays = ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา'];
+  static const _disabled = Color(0xFFC9CED6);
+  static const _segmentBg = Color(0xFFEEF2F9);
+
+  final DateTime _now = DateTime.now();
+
+  late bool _isMonth;
+  late int _year;
+  late int _month;
+  late int _day;
+
+  @override
+  void initState() {
+    super.initState();
+
+    final f = widget.initial;
+
+    _isMonth = f?.isMonth ?? false;
+    _year = f?.year ?? _now.year;
+    _month = f?.month ?? _now.month;
+    _day = f?.day ?? _now.day;
+
+    _clamp();
+  }
+
+  int _daysInMonth(int y, int m) => DateTime(y, m + 1, 0).day;
+
+  bool _isFutureMonth(int y, int m) =>
+      y > _now.year || (y == _now.year && m > _now.month);
+
+  bool _isFutureDay(int y, int m, int d) =>
+      _isFutureMonth(y, m) ||
+      (y == _now.year && m == _now.month && d > _now.day);
+
+
+  void _clamp() {
+    if (_year > _now.year) _year = _now.year;
+    if (_isFutureMonth(_year, _month)) _month = _now.month;
+
+    final maxDay = _daysInMonth(_year, _month);
+    if (_day > maxDay) _day = maxDay;
+    if (_isFutureDay(_year, _month, _day)) _day = _now.day;
+  }
+
+  bool get _canGoNext => _isMonth
+      ? _year < _now.year
+      : !_isFutureMonth(
+          _month == 12 ? _year + 1 : _year,
+          _month == 12 ? 1 : _month + 1,
+        );
+
+  void _prev() {
+    setState(() {
+      if (_isMonth) {
+        _year--;
+      } else if (_month == 1) {
+        _month = 12;
+        _year--;
+      } else {
+        _month--;
+      }
+      _clamp();
+    });
+  }
+
+  void _next() {
+    if (!_canGoNext) return;
+
+    setState(() {
+      if (_isMonth) {
+        _year++;
+      } else if (_month == 12) {
+        _month = 1;
+        _year++;
+      } else {
+        _month++;
+      }
+      _clamp();
+    });
+  }
+
+ 
+
+  Widget _segment(String label, bool selected, VoidCallback onTap) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFF1E88E5) : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: selected ? Colors.white : _textPrimary,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _monthDropdown() {
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<int>(
+        value: _month,
+        isDense: true,
+        icon: const Icon(Icons.arrow_drop_down, color: _textSecondary),
+        style: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+          color: _textPrimary,
+        ),
+        items: List.generate(12, (i) {
+          final m = i + 1;
+          final disabled = _isFutureMonth(_year, m);
+
+          return DropdownMenuItem<int>(
+            value: m,
+            enabled: !disabled,
+            child: Text(
+              _thMonths[i],
+              style: TextStyle(color: disabled ? _disabled : _textPrimary),
+            ),
+          );
+        }),
+        onChanged: (v) {
+          if (v == null) return;
+          setState(() {
+            _month = v;
+            _clamp();
+          });
+        },
+      ),
+    );
+  }
+
+  Widget _yearDropdown() {
+    final years = List.generate(6, (i) => _now.year - i); // ย้อนหลัง 6 ปี
+
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<int>(
+        value: _year,
+        isDense: true,
+        icon: const Icon(Icons.arrow_drop_down, color: _textSecondary),
+        style: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w700,
+          color: _textPrimary,
+        ),
+        items: years
+            .map(
+              (y) => DropdownMenuItem<int>(
+                value: y,
+                child: Text('${y + 543}'),
+              ),
+            )
+            .toList(),
+        onChanged: (v) {
+          if (v == null) return;
+          setState(() {
+            _year = v;
+            _clamp();
+          });
+        },
+      ),
+    );
+  }
+
+  Widget _header() {
+    return Row(
+      children: [
+        IconButton(
+          onPressed: _prev,
+          icon: const Icon(Icons.chevron_left),
+          color: _textSecondary,
+        ),
+        Expanded(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (!_isMonth) ...[
+                _monthDropdown(),
+                const SizedBox(width: 12),
+              ],
+              _yearDropdown(),
+            ],
+          ),
+        ),
+        IconButton(
+          onPressed: _canGoNext ? _next : null,
+          icon: const Icon(Icons.chevron_right),
+          color: _textSecondary,
+          disabledColor: _disabled,
+        ),
+      ],
+    );
+  }
+
+  Widget _dayGrid() {
+    final offset = DateTime(_year, _month, 1).weekday - 1; // จันทร์ = 0
+    final total = _daysInMonth(_year, _month);
+
+    return Column(
+      children: [
+        Row(
+          children: _weekdays
+              .map(
+                (w) => Expanded(
+                  child: Center(
+                    child: Text(
+                      w,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF8FA3C8),
+                      ),
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+        ),
+        const SizedBox(height: 8),
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: 42, // 6 แถวคงที่ ความสูงไม่กระโดด
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 7,
+            mainAxisSpacing: 4,
+            crossAxisSpacing: 0,
+          ),
+          itemBuilder: (_, index) {
+            final day = index - offset + 1;
+
+            if (day < 1 || day > total) return const SizedBox.shrink();
+
+            final disabled = _isFutureDay(_year, _month, day);
+            final selected = day == _day;
+
+            return GestureDetector(
+              onTap: disabled ? null : () => setState(() => _day = day),
+              behavior: HitTestBehavior.opaque,
+              child: Center(
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? const Color(0xFF1E88E5)
+                        : Colors.transparent,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Text(
+                    '$day',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight:
+                          selected ? FontWeight.w700 : FontWeight.w500,
+                      color: selected
+                          ? Colors.white
+                          : (disabled ? _disabled : _textPrimary),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _monthGrid() {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: 12,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 2.2,
+      ),
+      itemBuilder: (_, i) {
+        final m = i + 1;
+        final disabled = _isFutureMonth(_year, m);
+        final selected = m == _month;
+
+        return GestureDetector(
+          onTap: disabled ? null : () => setState(() => _month = m),
+          child: Container(
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: selected
+                  ? const Color(0xFF1E88E5)
+                  : const Color(0xFFF5F7FA),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              _thMonthsShort[i],
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: selected
+                    ? Colors.white
+                    : (disabled ? _disabled : _textPrimary),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(28),
+      ),
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // toggle รายวัน / รายเดือน
+              Container(
+                height: 46,
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: _segmentBg,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  children: [
+                    _segment('รายวัน', !_isMonth, () {
+                      setState(() => _isMonth = false);
+                    }),
+                    _segment('รายเดือน', _isMonth, () {
+                      setState(() => _isMonth = true);
+                    }),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              _header(),
+              const SizedBox(height: 8),
+              if (_isMonth) _monthGrid() else _dayGrid(),
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text(
+                      'ยกเลิก',
+                      style: TextStyle(
+                        color: _textSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.pop(
+                      context,
+                      _DateFilter(
+                        year: _year,
+                        month: _month,
+                        day: _isMonth ? null : _day,
+                      ),
+                    ),
+                    child: const Text(
+                      'ตกลง',
+                      style: TextStyle(
+                        color: Color(0xFF1E88E5),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 
 class _ActiveTab extends StatefulWidget {
   final String riderId;
@@ -903,8 +1403,7 @@ class _ActiveTabState extends State<_ActiveTab> {
         return;
       }
 
-      final lastKnown =
-          await Geolocator.getLastKnownPosition();
+      final lastKnown = await Geolocator.getLastKnownPosition();
 
       if (lastKnown != null) {
         _lat = lastKnown.latitude;
@@ -915,8 +1414,7 @@ class _ActiveTabState extends State<_ActiveTab> {
         }
       }
 
-      final current =
-          await Geolocator.getCurrentPosition(
+      final current = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
 
@@ -944,9 +1442,8 @@ class _ActiveTabState extends State<_ActiveTab> {
         );
 
         return order.copyWith(
-          distanceKm: km != null
-              ? double.parse(km.toStringAsFixed(1))
-              : null,
+          distanceKm:
+              km != null ? double.parse(km.toStringAsFixed(1)) : null,
         );
       }).toList();
     });
@@ -973,8 +1470,7 @@ class _ActiveTabState extends State<_ActiveTab> {
 
       if (!mounted) return;
 
-      final body =
-          jsonDecode(res.body) as Map<String, dynamic>;
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
 
       if (res.statusCode == 200 && body['ok'] == true) {
         setState(() {
@@ -990,9 +1486,7 @@ class _ActiveTabState extends State<_ActiveTab> {
         _recomputeDistances();
       } else {
         setState(() {
-          _error =
-              body['message'] as String? ??
-              'ไม่พบออเดอร์';
+          _error = body['message'] as String? ?? 'ไม่พบออเดอร์';
         });
       }
     } catch (e) {
@@ -1015,8 +1509,7 @@ class _ActiveTabState extends State<_ActiveTab> {
   }
 
   Future<void> _pickPhoto(String orderId) async {
-    final source =
-        await showModalBottomSheet<ImageSource>(
+    final source = await showModalBottomSheet<ImageSource>(
       context: context,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(
@@ -1081,13 +1574,10 @@ class _ActiveTabState extends State<_ActiveTab> {
 
   String _nextStatus(WorkOfRider order) {
     if (order.status == _S.arrivedAtShop) {
-      return order.serviceType == 'dry'
-          ? _S.waitingDry
-          : _S.waitingWash;
+      return order.serviceType == 'dry' ? _S.waitingDry : _S.waitingWash;
     }
 
-    return _statusSteps[order.status]?.nextStatus ??
-        _S.completed;
+    return _statusSteps[order.status]?.nextStatus ?? _S.completed;
   }
 
   Future<void> _confirmStep(WorkOfRider order) async {
@@ -1113,8 +1603,7 @@ class _ActiveTabState extends State<_ActiveTab> {
       final nextStatus = _nextStatus(order);
 
       final successMessage =
-          step?.successMessage ??
-          'ส่งผ้าถึงลูกค้าเรียบร้อยแล้ว';
+          step?.successMessage ?? 'ส่งผ้าถึงลูกค้าเรียบร้อยแล้ว';
 
       final request = http.MultipartRequest(
         'PUT',
@@ -1138,13 +1627,11 @@ class _ActiveTabState extends State<_ActiveTab> {
         await request.send(),
       );
 
-      final body =
-          jsonDecode(res.body) as Map<String, dynamic>;
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
 
       if (!mounted) return;
 
-      if (res.statusCode == 200 &&
-          body['ok'] == true) {
+      if (res.statusCode == 200 && body['ok'] == true) {
         await Get.dialog<void>(
           _successDialog(successMessage),
         );
@@ -1160,8 +1647,7 @@ class _ActiveTabState extends State<_ActiveTab> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              body['message'] as String? ??
-                  'เกิดข้อผิดพลาด',
+              body['message'] as String? ?? 'เกิดข้อผิดพลาด',
             ),
             behavior: SnackBarBehavior.floating,
           ),
@@ -1189,27 +1675,206 @@ class _ActiveTabState extends State<_ActiveTab> {
     }
   }
 
+  Future<void> _cancelOrder(WorkOfRider order) async {
+    final confirm = await Get.dialog<bool>(_confirmCancelDialog());
+
+    if (confirm != true) return;
+
+    setState(() => _uploadingByOrderId[order.id] = true);
+
+    try {
+      final res = await http.put(
+        Uri.parse('${widget.apiUrl}/order/rider/cancel/${order.id}'),
+      );
+
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      final ok = res.statusCode == 200 && body['ok'] == true;
+
+      _showSnack(
+        body['message'] as String? ??
+            (ok ? 'ยกเลิกสำเร็จ' : 'เกิดข้อผิดพลาด'),
+        success: ok,
+      );
+
+      if (ok && mounted) {
+        setState(() => _photoByOrderId.remove(order.id));
+        _fetchOrders();
+      }
+    } catch (e) {
+      log('cancelOrder: $e');
+      _showSnack('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', success: false);
+    } finally {
+      if (mounted) {
+        setState(() => _uploadingByOrderId.remove(order.id));
+      }
+    }
+  }
+
+  Widget _confirmCancelDialog() {
+    return Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 60,
+              height: 60,
+              decoration: const BoxDecoration(
+                color: Color(0xFFFEE2E2),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.cancel_outlined,
+                color: Colors.red,
+                size: 32,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'ยกเลิกคำสั่งซื้อ',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'ต้องการยกเลิกออเดอร์นี้ใช่หรือไม่?\n'
+              'เนื่องจากไม่พบตะกร้าของลูกค้า',
+              style: TextStyle(
+                fontSize: 13,
+                color: _textSecondary,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => Get.back(result: false),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _textSecondary,
+                      side: const BorderSide(color: _border),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      'ไม่ใช่',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => Get.back(result: true),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: const Text(
+                      'ยืนยัน',
+                      style: TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showSnack(String message, {bool success = true}) {
+    final color = success ? _green : Colors.red;
+
+    Get.snackbar(
+      success ? 'สำเร็จ' : 'เกิดข้อผิดพลาด',
+      message,
+      snackPosition: SnackPosition.TOP,
+      backgroundColor: Colors.white,
+      colorText: _textPrimary,
+      borderColor: color.withOpacity(0.4),
+      borderWidth: 1,
+      borderRadius: 12,
+      margin: const EdgeInsets.all(12),
+      duration: const Duration(seconds: 3),
+      icon: Icon(
+        success ? Icons.check_circle : Icons.error,
+        color: color,
+      ),
+      shouldIconPulse: false,
+      boxShadows: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.08),
+          blurRadius: 12,
+          offset: const Offset(0, 4),
+        ),
+      ],
+    );
+  }
+
   Widget _photoBox(
     String orderId,
     File? photo,
-    bool uploading,
-  ) {
+    bool uploading, {
+    VoidCallback? onCancel,
+  }) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'แนบรูปภาพ',
-          style: TextStyle(
-            fontWeight: FontWeight.w600,
-            fontSize: 13,
-            color: _textPrimary,
-          ),
+        Row(
+          children: [
+            const Text(
+              'แนบรูปภาพ',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+                color: _textPrimary,
+              ),
+            ),
+            const Spacer(),
+            if (onCancel != null)
+              TextButton.icon(
+                onPressed: uploading ? null : onCancel,
+                icon: const Icon(Icons.close, size: 16),
+                label: const Text('ยกเลิก'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.red,
+                  backgroundColor: Colors.red.withOpacity(0.08),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  textStyle: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+          ],
         ),
         const SizedBox(height: 8),
         GestureDetector(
-          onTap: uploading
-              ? null
-              : () => _pickPhoto(orderId),
+          onTap: uploading ? null : () => _pickPhoto(orderId),
           child: photo != null
               ? _photoPreview(orderId, photo)
               : _photoPlaceholder(),
@@ -1332,8 +1997,7 @@ class _ActiveTabState extends State<_ActiveTab> {
 
   Widget _buildOrderCard(WorkOfRider order) {
     final step = _statusSteps[order.status];
-    final uploading =
-        _uploadingByOrderId[order.id] ?? false;
+    final uploading = _uploadingByOrderId[order.id] ?? false;
 
     final shortId = order.id
         .substring(
@@ -1342,8 +2006,7 @@ class _ActiveTabState extends State<_ActiveTab> {
         )
         .toUpperCase();
 
-    final statusLabel =
-        step?.label ?? order.status;
+    final statusLabel = step?.label ?? order.status;
 
     final hasActionStep = step != null;
     final needsPhoto = step?.needsPhoto ?? false;
@@ -1354,8 +2017,7 @@ class _ActiveTabState extends State<_ActiveTab> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment:
-                MainAxisAlignment.spaceBetween,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
                 '#$shortId',
@@ -1374,8 +2036,7 @@ class _ActiveTabState extends State<_ActiveTab> {
             order.customer?.phone,
             order.customer?.profileImage,
           ),
-          if (order.address != null)
-            _addressRow(order.address!),
+          if (order.address != null) _addressRow(order.address!),
           if (order.orderDatetime != null) ...[
             const SizedBox(height: 4),
             Row(
@@ -1387,9 +2048,7 @@ class _ActiveTabState extends State<_ActiveTab> {
                 ),
                 const SizedBox(width: 5),
                 Text(
-                  _formatOrderDateTime(
-                    order.orderDatetime,
-                  ),
+                  _formatOrderDateTime(order.orderDatetime),
                   style: const TextStyle(
                     fontSize: 12,
                     color: _textSecondary,
@@ -1414,12 +2073,10 @@ class _ActiveTabState extends State<_ActiveTab> {
               ),
             ],
           ),
-          if (order.note != null &&
-              order.note!.isNotEmpty) ...[
+          if (order.note != null && order.note!.isNotEmpty) ...[
             const SizedBox(height: 6),
             Row(
-              crossAxisAlignment:
-                  CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Icon(
                   Icons.note_alt_outlined,
@@ -1450,13 +2107,14 @@ class _ActiveTabState extends State<_ActiveTab> {
                 order.id,
                 _photoByOrderId[order.id],
                 uploading,
+                onCancel: order.status == _S.pickedUp
+                    ? () => _cancelOrder(order)
+                    : null,
               ),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: uploading
-                    ? null
-                    : () => _confirmStep(order),
+                onPressed: uploading ? null : () => _confirmStep(order),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _green,
                   foregroundColor: Colors.white,
@@ -1478,7 +2136,7 @@ class _ActiveTabState extends State<_ActiveTab> {
                         ),
                       )
                     : Text(
-                        step!.buttonLabel,
+                        step.buttonLabel,
                         style: const TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 15,
@@ -1527,10 +2185,8 @@ class _ActiveTabState extends State<_ActiveTab> {
       child: ListView.separated(
         padding: const EdgeInsets.all(16),
         itemCount: _orders.length,
-        separatorBuilder: (_, __) =>
-            const SizedBox(height: 12),
-        itemBuilder: (_, i) =>
-            _buildOrderCard(_orders[i]),
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (_, i) => _buildOrderCard(_orders[i]),
       ),
     );
   }

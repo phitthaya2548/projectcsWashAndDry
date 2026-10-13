@@ -388,8 +388,8 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
                           _buildMenuItem(
                             icon: 'assets/icons/wash.png',
                             iconFallback: Icons.book_online,
-                            title: 'จัดการเครื่องซักผ้า',
-                            subtitle: 'เพิ่มและเปิดให้บริการเครื่องซัก',
+                            title: 'จัดการเครื่องซักอบ',
+                            subtitle: 'เพิ่มและแก้ไขเครื่องซักอบ',
                             onTap: () {
                               Get.to(() => const ManageMachineScreen());
                             },
@@ -399,7 +399,7 @@ class _StoreSettingsScreenState extends State<StoreSettingsScreen> {
                             icon: 'assets/icons/customerget.png',
                             iconFallback: Icons.people,
                             title: 'ข้อมูลลูกค้า',
-                            subtitle: 'ดูและจัดการข้อมูล',
+                            subtitle: 'ค้นหาและดูข้อมูลลูกค้า',
                             onTap: () {
 Get.to(() => const ManageCustomersScreen());
                             },
@@ -409,7 +409,7 @@ Get.to(() => const ManageCustomersScreen());
                             icon: 'assets/icons/addemployee.png',
                             iconFallback: Icons.person,
                             title: 'จัดการพนักงาน',
-                            subtitle: 'เพิ่ม ลบ และแก้ไข พนักงาน',
+                            subtitle: 'รับและลบพนักงาน',
                             onTap: () {
                                Get.to(() => const ManageEmployeeScreen());
                             },
@@ -428,7 +428,7 @@ Get.to(() => const ManageCustomersScreen());
                           _buildMenuItem(
                             icon: 'assets/icons/settings.png',
                             iconFallback: Icons.settings,
-                            title: 'ตั้งค่าร้าน',
+                            title: 'ข้อมูลร้าน',
                             subtitle: 'แก้ไขข้อมูลร้าน',
                             onTap: () async {
   final result = await Get.to(() => StoreEditScreen(storeId: storeId ?? ''));

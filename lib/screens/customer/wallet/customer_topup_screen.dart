@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -508,63 +509,77 @@ class _TopupCustomerState extends State<TopupCustomer> {
   }
 
   Future<void> _submitTopup() async {
-    if (_loading) return;
-    if (_slipFile == null) {
-      _showMsg("กรุณาอัปโหลดสลิปก่อน", isError: true);
-      return;
-    }
-    if (!await _slipFile!.exists()) {
-      _showMsg("ไฟล์สลิปหาย กรุณาเลือกใหม่", isError: true);
-      _removeSlip();
-      return;
-    }
-    setState(() => _loading = true);
-    try {
-      final customerId = await _session.getCustomerId();
-      if (customerId == null || customerId.isEmpty) {
-        _showMsg("ไม่พบข้อมูล Customer ID กรุณาเข้าสู่ระบบใหม่", isError: true);
-        setState(() => _loading = false);
-        return;
-      }
-      final request = http.MultipartRequest(
-        "POST",
-        Uri.parse(url + "/wallet/checkslip"),
-      );
-      request.fields['customer_id'] = customerId;
-      final mimeType = lookupMimeType(_slipFile!.path) ?? "image/jpeg";
-      final parts = mimeType.split('/');
-      request.files.add(
-        await http.MultipartFile.fromPath(
-          "file",
-          _slipFile!.path,
-          contentType: MediaType(
-            parts[0],
-            parts.length > 1 ? parts[1] : "jpeg",
-          ),
-        ),
-      );
-      final response = await request.send();
-      final body = await response.stream.bytesToString();
-      if (!mounted) return;
-      Map<String, dynamic> data = {};
-      try {
-        data = json.decode(body);
-      } catch (_) {}
-      if (data["ok"] == true) {
-        _showSuccess();
-      } else {
-        final message = data["message"]?.toString() ?? "ตรวจสลิปไม่สำเร็จ";
-        _showMsg(message, isError: true);
-      }
-    } catch (e) {
-      if (!mounted) return;
-      _showMsg("เกิดข้อผิดพลาด: $e", isError: true);
-    } finally {
-      if (mounted) {
-        setState(() => _loading = false);
-      }
-    }
+  if (_loading) return;
+  if (_slipFile == null) {
+    _showMsg("กรุณาอัปโหลดสลิปก่อน", isError: true);
+    return;
   }
+  if (!await _slipFile!.exists()) {
+    _showMsg("ไฟล์สลิปหาย กรุณาเลือกใหม่", isError: true);
+    _removeSlip();
+    return;
+  }
+  if (url.isEmpty) {
+    _showMsg("ไม่พบการตั้งค่า API กรุณาลองใหม่", isError: true);
+    return;
+  }
+
+  setState(() => _loading = true);
+  try {
+    final customerId = await _session.getCustomerId();
+    if (customerId == null || customerId.isEmpty) {
+      _showMsg("ไม่พบข้อมูล Customer ID กรุณาเข้าสู่ระบบใหม่", isError: true);
+      return;
+    }
+
+    final request = http.MultipartRequest(
+      "POST",
+      Uri.parse("$url/wallet/checkslip"),
+    );
+    request.fields['customer_id'] = customerId;
+
+    final mimeType = lookupMimeType(_slipFile!.path) ?? "image/jpeg";
+    final parts = mimeType.split('/');
+    request.files.add(
+      await http.MultipartFile.fromPath(
+        "file",
+        _slipFile!.path,
+        contentType: MediaType(parts[0], parts.length > 1 ? parts[1] : "jpeg"),
+      ),
+    );
+
+    final streamed = await request.send().timeout(const Duration(seconds: 45));
+    final body = await streamed.stream.bytesToString();
+    if (!mounted) return;
+
+    Map<String, dynamic> data = {};
+    try {
+      data = json.decode(body) as Map<String, dynamic>;
+    } catch (_) {}
+
+    
+    final success = streamed.statusCode >= 200 &&
+        streamed.statusCode < 300 &&
+        data["ok"] == true;
+
+    if (success) {
+      _showSuccess();
+    } else {
+      final message = data["message"]?.toString() ?? "ตรวจสลิปไม่สำเร็จ";
+      _showMsg(message, isError: true);
+     
+      if (mounted) setState(() => _slipFile = null);
+    }
+  } on TimeoutException {
+    if (!mounted) return;
+    _showMsg("เซิร์ฟเวอร์ตอบช้า กรุณาลองใหม่", isError: true);
+  } catch (e) {
+    if (!mounted) return;
+    _showMsg("เกิดข้อผิดพลาด: $e", isError: true);
+  } finally {
+    if (mounted) setState(() => _loading = false);
+  }
+}
 
 void _showMsg(String text, {bool isError = false}) {
   Get.snackbar(

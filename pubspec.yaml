@@ -40,6 +40,8 @@ dependencies:
   flutter_compass: ^0.8.1
   gal: ^2.3.0
   url_launcher: ^6.3.0
+  flutter_localizations:
+    sdk: flutter
 dev_dependencies:
   flutter_test:
     sdk: flutter

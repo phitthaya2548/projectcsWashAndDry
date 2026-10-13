@@ -753,10 +753,10 @@ class _EmployeeReportScreenState extends State<EmployeeReportScreen> {
       children: [
         _summaryCard(),
         const SizedBox(height: 22),
-        _sectionTitle(title: 'Rider', count: report!.riders.length),
+        _sectionTitle(title: 'พนักงานรับส่ง', count: report!.riders.length),
         const SizedBox(height: 10),
         if (report!.riders.isEmpty)
-          _emptyCard('ไม่มีข้อมูล Rider')
+          _emptyCard('ไม่มีข้อมูล พนักงานรับส่ง')
         else
           ...report!.riders.map(_riderCard),
         const SizedBox(height: 24),

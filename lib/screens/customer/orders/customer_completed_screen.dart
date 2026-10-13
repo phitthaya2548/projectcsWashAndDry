@@ -230,7 +230,7 @@ class _CustomerCompletedScreenState extends State<CustomerCompletedScreen> {
                   if (o.riderPickup != null)
                     _buildPersonRow(
                       icon: Icons.directions_bike_rounded,
-                      role: 'พนักงานรับส่งรับ',
+                      role: 'พนักงานรับส่งรับผ้า',
                       fullname: o.riderPickup?.fullname,
                       phone: o.riderPickup?.phone,
                       vehicleType: o.riderPickup?.vehicleType,
@@ -258,7 +258,7 @@ class _CustomerCompletedScreenState extends State<CustomerCompletedScreen> {
                     ),
                     _buildPersonRow(
                       icon: Icons.delivery_dining_rounded,
-                      role: 'พนักงานรับส่งส่ง',
+                      role: 'พนักงานรับส่งส่งผ้า',
                       fullname: o.riderDelivery!.fullname,
                       phone: o.riderDelivery!.phone,
                       vehicleType: o.riderDelivery?.vehicleType,

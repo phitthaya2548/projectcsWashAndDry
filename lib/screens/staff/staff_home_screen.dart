@@ -189,7 +189,7 @@ class _StaffHomeScreenState extends State<StaffHomeScreen> {
     return (text: 'ไม่ระบุที่อยู่');
   }
 
-  // (ไม่ใช่ field ที่คำนวณครั้งเดียวตอนสร้าง object เหมือนโค้ดเดิม)
+ 
   String _statusText(String? status) => switch (status) {
         'ONLINE' => 'ใช้งาน',
         'TEMP_CLOSED' => 'ปิดชั่วคราว',
@@ -617,7 +617,7 @@ class _OrderCard extends StatelessWidget {
                               onPressed: onStartWash,
                              
                               label: Text(
-                                'เริ่มคำนวณ',
+                                'นำเข้าคิว',
                                 style:
                                     const TextStyle(
                                   fontSize: 15,

@@ -527,8 +527,6 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
     required String? imageUrl,
     required String fallbackLetter,
     required bool active,
-    required IconData roleIcon,
-    required Color roleColor,
   }) {
     return SizedBox(
       width: 54,
@@ -557,19 +555,7 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
                   : null,
             ),
           ),
-          Positioned(
-            right: -2,
-            bottom: -2,
-            child: Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: roleColor,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-              child: Icon(roleIcon, size: 10, color: Colors.white),
-            ),
-          ),
+          
         ],
       ),
     );
@@ -659,8 +645,6 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
             imageUrl: rider.profileImage,
             fallbackLetter: rider.fullName.isNotEmpty ? rider.fullName[0] : '?',
             active: statusInfo.active,
-            roleIcon: Icons.pedal_bike_rounded,
-            roleColor: _Palette.primary,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -697,7 +681,16 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
                   runSpacing: 6,
                   children: [
                     _metaTag(Icons.phone_rounded, rider.phone),
-                    _metaTag(Icons.two_wheeler_rounded, rider.vehicleType ?? ''),
+  _metaTag(
+  rider.vehicleType == 'car'
+      ? Icons.directions_car
+      : Icons.motorcycle,
+  rider.vehicleType == 'car'
+      ? 'รถยนต์'
+      : rider.vehicleType == 'motorcycle'
+          ? 'มอเตอร์ไซค์'
+          : (rider.vehicleType ?? '-'),
+),
                     _metaTag(Icons.badge_outlined, (rider.licensePlate ?? '').toUpperCase()),
                   ],
                 ),
@@ -732,8 +725,6 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
             imageUrl: staff.profileImage,
             fallbackLetter: staff.fullName.isNotEmpty ? staff.fullName[0] : '?',
             active: statusInfo.active,
-            roleIcon: Icons.local_laundry_service_rounded,
-            roleColor: _Palette.mint,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -746,7 +737,7 @@ class _ManageEmployeeScreenState extends State<ManageEmployeeScreen> {
                       child: _iconLine(
                         icon: Icons.person_rounded,
                         text: staff.fullName,
-                        iconColor: _Palette.mint,
+                        iconColor: _Palette.primary,
                         style: const TextStyle(
                           fontSize: 14.5,
                           fontWeight: FontWeight.w700,

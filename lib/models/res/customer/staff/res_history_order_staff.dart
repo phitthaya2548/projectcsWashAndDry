@@ -35,9 +35,10 @@ class StaffOrder {
   final String serviceType;
   final String? address;
   final String? storeId;
-    final String? note;   
+  final String? note;
   final String? detergentOption;
   final String? beforeWashImage;
+  final DateTime? orderDatetime; 
   final CustomerInfo? customer;
   final MachineInfo? washer;
   final MachineInfo? dryer;
@@ -48,48 +49,53 @@ class StaffOrder {
     required this.serviceType,
     this.address,
     this.storeId,
-    this.note, 
+    this.note,
     this.detergentOption,
     this.beforeWashImage,
+    this.orderDatetime, 
     this.customer,
     this.washer,
     this.dryer,
   });
 
- factory StaffOrder.fromJson(Map<String, dynamic> json) => StaffOrder(
-      id: json['id'] ?? json['_id'] ?? '',
-      status: json['status'] ?? '',
-      serviceType: json['service_type'] ?? '',
-      address: json['address'] as String?,
-       note: json['note'] as String?, 
-      storeId: (json['store'] as Map<String, dynamic>?)?['id'] as String?, 
-      detergentOption: json['detergent_option'] as String?,
-      beforeWashImage: json['before_wash_image'] as String?,
-      customer: json['customer'] != null
-          ? CustomerInfo.fromJson(json['customer'] as Map<String, dynamic>)
-          : null,
-      washer: json['washer'] != null
-          ? MachineInfo.fromJson(json['washer'] as Map<String, dynamic>)
-          : null,
-      dryer: json['dryer'] != null
-          ? MachineInfo.fromJson(json['dryer'] as Map<String, dynamic>)
-          : null,
-    );
+  factory StaffOrder.fromJson(Map<String, dynamic> json) => StaffOrder(
+        id: json['id'] ?? json['_id'] ?? '',
+        status: json['status'] ?? '',
+        serviceType: json['service_type'] ?? '',
+        address: json['address'] as String?,
+        note: json['note'] as String?,
+        storeId: (json['store'] as Map<String, dynamic>?)?['id'] as String?,
+        detergentOption: json['detergent_option'] as String?,
+        beforeWashImage: json['before_wash_image'] as String?,
+        orderDatetime: json['order_datetime'] != null
+            ? DateTime.tryParse(json['order_datetime'].toString())?.toLocal()
+            : null, 
+        customer: json['customer'] != null
+            ? CustomerInfo.fromJson(json['customer'] as Map<String, dynamic>)
+            : null,
+        washer: json['washer'] != null
+            ? MachineInfo.fromJson(json['washer'] as Map<String, dynamic>)
+            : null,
+        dryer: json['dryer'] != null
+            ? MachineInfo.fromJson(json['dryer'] as Map<String, dynamic>)
+            : null,
+      );
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'status': status,
         'service_type': serviceType,
         'address': address,
-         'note': note,  
+        'note': note,
         'store': storeId != null ? {'id': storeId} : null,
         'detergent_option': detergentOption,
         'before_wash_image': beforeWashImage,
+        'order_datetime': orderDatetime?.toUtc().toIso8601String(), // เพิ่ม
         'customer': customer?.toJson(),
         'washer': washer?.toJson(),
         'dryer': dryer?.toJson(),
       };
 }
-
 class CustomerInfo {
   final String name;
   final String phone;

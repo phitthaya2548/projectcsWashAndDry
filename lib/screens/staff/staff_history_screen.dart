@@ -12,6 +12,26 @@ import 'package:wash_and_dry/screens/staff/staff_calculate_screen.dart';
 import 'package:wash_and_dry/service/session_service.dart';
 import 'package:wash_and_dry/widgets/appbarstaff.dart';
 
+const List<String> _thaiMonth = [
+  'มกราคม',
+  'กุมภาพันธ์',
+  'มีนาคม',
+  'เมษายน',
+  'พฤษภาคม',
+  'มิถุนายน',
+  'กรกฎาคม',
+  'สิงหาคม',
+  'กันยายน',
+  'ตุลาคม',
+  'พฤศจิกายน',
+  'ธันวาคม',
+];
+
+String _fmtThai(DateTime d) =>
+    '${d.day} ${_thaiMonth[d.month - 1]} ${d.year + 543}';
+
+String _fmtThaiMonth(DateTime d) => '${_thaiMonth[d.month - 1]} ${d.year + 543}';
+
 void showStatusSnackbar({required String message, required bool success}) {
   Get.closeAllSnackbars();
   Get.snackbar(
@@ -55,11 +75,14 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
   List<StaffOrder> _activeOrders = [];
   List<StaffOrder> _doneOrders = [];
   bool _isLoading = false;
+  DateTime _date = _todayDate();
+  bool _isMonthMode = false;
   final Map<String, String> _lastKnownStatus = {};
   final Map<String, Duration> _remainingTimes = {};
   final Map<String, String> _countdownStatus = {};
   StreamSubscription<QuerySnapshot>? _statusSub;
   Timer? _countdownTimer;
+
   static const _activeStatuses = [
     'waiting_wash',
     'waiting_dry',
@@ -68,6 +91,21 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
     'washing',
     'drying',
   ];
+
+  static const _doneStatuses = [
+    'waiting_delivery',
+    'delivery_heading_to_shop',
+    'store_pickup_in_progress',
+    'delivery_pickup_completed',
+    'delivery_in_progress',
+    'completed',
+  ];
+
+  static DateTime _todayDate() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -139,11 +177,37 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
         }, onError: (e) => log('>>> STATUS STREAM ERROR: $e'));
   }
 
+  Future<void> _openCustom() async {
+    final today = _todayDate();
+    final picked = await showDialog<_DateResult>(
+      context: context,
+      builder: (_) => _CalendarDialog(
+        initial: _date.isAfter(today) ? today : _date,
+        initialMonthMode: _isMonthMode,
+        first: DateTime(today.year - 2, 1, 1),
+        last: today,
+      ),
+    );
+    if (picked == null) return;
+    setState(() {
+      _date = DateTime(picked.date.year, picked.date.month, picked.date.day);
+      _isMonthMode = picked.monthMode;
+    });
+    await _fetchOrders();
+  }
+
   Future<void> _fetchOrders() async {
     if (_staffId == null || _url.isEmpty) return;
     setState(() => _isLoading = true);
     try {
-      final uri = Uri.parse('$_url/order/staff/historynow/$_staffId');
+      final params = <String, String>{
+        'month': _date.month.toString(),
+        'year': _date.year.toString(),
+        if (!_isMonthMode) 'day': _date.day.toString(),
+      };
+      final uri = Uri.parse(
+        '$_url/order/staff/historynow/$_staffId',
+      ).replace(queryParameters: params);
       log('>>> URL: $uri');
       final res = await http.get(uri);
       log('>>> STATUS: ${res.statusCode}');
@@ -155,15 +219,7 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
               .where((o) => _activeStatuses.contains(o.status))
               .toList();
           _doneOrders = response.data
-              .where(
-                (o) => const [
-                  'waiting_delivery',
-                  'delivery_heading_to_shop',
-                  'delivery_pickup_completed',
-                  'delivery_in_progress',
-                  'completed',
-                ].contains(o.status),
-              )
+              .where((o) => _doneStatuses.contains(o.status))
               .toList();
         });
         for (final o in response.data) {
@@ -264,7 +320,14 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
                     controller: _tabController,
                     children: [
                       _buildOrderList(_activeOrders, isDone: false),
-                      _buildOrderList(_doneOrders, isDone: true),
+                      Column(
+                        children: [
+                          _buildDateFilter(),
+                          Expanded(
+                            child: _buildOrderList(_doneOrders, isDone: true),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
           ),
@@ -290,6 +353,68 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
       ],
     ),
   );
+
+  Widget _buildDateFilter() {
+    return Container(
+      width: double.infinity,
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ActionChip(
+            avatar: const Icon(
+              Icons.calendar_month,
+              size: 16,
+              color: Color(0xFF1E88E5),
+            ),
+            label: const Text('เลือกวันที่'),
+            backgroundColor: const Color(0xFFF1F5F9),
+            side: BorderSide.none,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            labelStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+            onPressed: _openCustom,
+          ),
+          const SizedBox(height: 10),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE3F2FD),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.event, size: 16, color: Color(0xFF1E88E5)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _isMonthMode ? _fmtThaiMonth(_date) : _fmtThai(_date),
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF1565C0),
+                    ),
+                  ),
+                ),
+                Text(
+                  '${_doneOrders.length} รายการ',
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF1565C0)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildOrderList(List<StaffOrder> orders, {required bool isDone}) {
     if (orders.isEmpty) {
       return const Center(child: Text('ไม่มีออเดอร์'));
@@ -306,6 +431,370 @@ class _StaffHistoryScreenState extends State<StaffHistoryScreen>
           url: _url,
           staffId: _staffId ?? '',
           remainingTime: _remainingTimes[orders[i].id],
+        ),
+      ),
+    );
+  }
+}
+
+class _DateResult {
+  final DateTime date;
+  final bool monthMode;
+  const _DateResult(this.date, this.monthMode);
+}
+
+class _CalendarDialog extends StatefulWidget {
+  final DateTime initial;
+  final bool initialMonthMode;
+  final DateTime first;
+  final DateTime last;
+  const _CalendarDialog({
+    required this.initial,
+    required this.initialMonthMode,
+    required this.first,
+    required this.last,
+  });
+  @override
+  State<_CalendarDialog> createState() => _CalendarDialogState();
+}
+
+class _CalendarDialogState extends State<_CalendarDialog> {
+  static const _blue = Color(0xFF1E88E5);
+  static const _months = [
+    'มกราคม',
+    'กุมภาพันธ์',
+    'มีนาคม',
+    'เมษายน',
+    'พฤษภาคม',
+    'มิถุนายน',
+    'กรกฎาคม',
+    'สิงหาคม',
+    'กันยายน',
+    'ตุลาคม',
+    'พฤศจิกายน',
+    'ธันวาคม',
+  ];
+  static const _weekdays = ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา'];
+
+  late DateTime _selected = widget.initial;
+  late int _year = widget.initial.year;
+  late int _month = widget.initial.month;
+  late bool _monthMode = widget.initialMonthMode;
+
+  int get _minMonth => _year == widget.first.year ? widget.first.month : 1;
+  int get _maxMonth => _year == widget.last.year ? widget.last.month : 12;
+  bool get _canPrev =>
+      _year * 12 + _month > widget.first.year * 12 + widget.first.month;
+  bool get _canNext =>
+      _year * 12 + _month < widget.last.year * 12 + widget.last.month;
+
+  void _shift(int delta) {
+    final index = _year * 12 + (_month - 1) + delta;
+    setState(() {
+      _year = index ~/ 12;
+      _month = index % 12 + 1;
+    });
+  }
+
+  void _step(int dir) {
+    if (_monthMode) {
+      _setYear(_year + dir);
+    } else {
+      _shift(dir);
+    }
+  }
+
+  bool get _canStepPrev => _monthMode ? _year > widget.first.year : _canPrev;
+  bool get _canStepNext => _monthMode ? _year < widget.last.year : _canNext;
+
+  bool _monthEnabled(int m) {
+    final idx = _year * 12 + m;
+    return idx >= widget.first.year * 12 + widget.first.month &&
+        idx <= widget.last.year * 12 + widget.last.month;
+  }
+
+  void _setYear(int year) {
+    setState(() {
+      _year = year;
+      if (_month < _minMonth) _month = _minMonth;
+      if (_month > _maxMonth) _month = _maxMonth;
+    });
+  }
+
+  bool _enabled(DateTime d) => !d.isBefore(widget.first) && !d.isAfter(widget.last);
+
+  Widget _modeButton(String label, bool monthValue) {
+    final active = _monthMode == monthValue;
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _monthMode = monthValue),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: active ? _blue : Colors.transparent,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: active ? Colors.white : Colors.black87,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModeSwitch() {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Row(
+        children: [
+          _modeButton('รายวัน', false),
+          _modeButton('รายเดือน', true),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    const style = TextStyle(
+      fontSize: 16,
+      fontWeight: FontWeight.w600,
+      color: Colors.black87,
+    );
+    return Row(
+      children: [
+        IconButton(
+          icon: const Icon(Icons.chevron_left),
+          color: Colors.black54,
+          onPressed: _canStepPrev ? () => _step(-1) : null,
+        ),
+        Expanded(
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (!_monthMode) ...[
+              DropdownButtonHideUnderline(
+                child: DropdownButton<int>(
+                  value: _month,
+                  isDense: true,
+                  style: style,
+                  items: [
+                    for (int m = _minMonth; m <= _maxMonth; m++)
+                      DropdownMenuItem(value: m, child: Text(_months[m - 1])),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => _month = v);
+                  },
+                ),
+              ),
+              const SizedBox(width: 16),
+              ],
+              DropdownButtonHideUnderline(
+                child: DropdownButton<int>(
+                  value: _year,
+                  isDense: true,
+                  style: style,
+                  items: [
+                    for (int y = widget.first.year; y <= widget.last.year; y++)
+                      DropdownMenuItem(value: y, child: Text('${y + 543}')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) _setYear(v);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.chevron_right),
+          color: Colors.black54,
+          onPressed: _canStepNext ? () => _step(1) : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildWeekdays() {
+    return Row(
+      children: [
+        for (final w in _weekdays)
+          Expanded(
+            child: Center(
+              child: Text(
+                w,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF7C93B5),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildDay(int day) {
+    final date = DateTime(_year, _month, day);
+    final enabled = _enabled(date);
+    final selected = date == _selected;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: enabled ? () => setState(() => _selected = date) : null,
+      child: Center(
+        child: Container(
+          width: 36,
+          height: 36,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? _blue : Colors.transparent,
+            shape: BoxShape.circle,
+          ),
+          child: Text(
+            '$day',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              color: selected
+                  ? Colors.white
+                  : enabled
+                  ? Colors.black87
+                  : Colors.grey.shade400,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGrid() {
+    final lead = DateTime(_year, _month, 1).weekday - 1;
+    final days = DateTime(_year, _month + 1, 0).day;
+    return GridView.count(
+      crossAxisCount: 7,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      children: List.generate(42, (i) {
+        final day = i - lead + 1;
+        if (day < 1 || day > days) return const SizedBox.shrink();
+        return _buildDay(day);
+      }),
+    );
+  }
+
+  static const _monthsShort = [
+    'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+    'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.',
+  ];
+
+  Widget _buildMonthGrid() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 16),
+      child: GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: 12,
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          childAspectRatio: 2.2,
+        ),
+        itemBuilder: (_, i) {
+          final m = i + 1;
+          final enabled = _monthEnabled(m);
+          final selected = m == _month;
+          return GestureDetector(
+            onTap: enabled ? () => setState(() => _month = m) : null,
+            child: Container(
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: selected ? _blue : const Color(0xFFF5F7FA),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                _monthsShort[i],
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: selected
+                      ? Colors.white
+                      : enabled
+                      ? Colors.black87
+                      : Colors.grey.shade400,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildModeSwitch(),
+            _buildHeader(),
+            if (_monthMode)
+              _buildMonthGrid()
+            else ...[
+              const SizedBox(height: 8),
+              _buildWeekdays(),
+              const SizedBox(height: 4),
+              _buildGrid(),
+            ],
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(
+                    'ยกเลิก',
+                    style: TextStyle(
+                      color: Colors.grey.shade700,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(
+                    context,
+                    _monthMode
+                        ? _DateResult(DateTime(_year, _month, 1), true)
+                        : _DateResult(_selected, false),
+                  ),
+                  child: const Text(
+                    'ตกลง',
+                    style: TextStyle(
+                      color: _blue,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
@@ -343,6 +832,13 @@ class _OrderCard extends StatelessWidget {
   bool get _showStartDry => _isWashing && order.serviceType == 'wash_dry';
   String get _startActionLabel =>
       order.serviceType == 'dry' ? 'เริ่มอบ' : 'เริ่มซัก';
+
+  String _formatDate(DateTime? d) {
+    if (d == null) return '-';
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${_fmtThai(d)} ${two(d.hour)}:${two(d.minute)} น.';
+  }
+
   String _statusText(String s) => switch (s) {
     'waiting_wash' => 'รอซัก',
     'waiting_dry' => 'รออบ',
@@ -350,9 +846,10 @@ class _OrderCard extends StatelessWidget {
     'payment_completed' => 'ชำระเงินแล้ว',
     'washing' => 'กำลังซัก',
     'drying' => 'กำลังอบ',
-    'waiting_delivery' => 'รอพนักงานรับส่ง',
-    'delivery_heading_to_shop' => 'พนักงานรับส่งกำลังมารับผ้า',
-    'delivery_pickup_completed' => 'พนักงานรับส่งรับผ้าแล้ว',
+    'waiting_delivery' => 'รอส่งผ้า',
+    'delivery_heading_to_shop' => 'กำลังไปรับผ้าที่ร้าน',
+    'store_pickup_in_progress' => 'กำลังรับผ้าที่ร้าน',
+    'delivery_pickup_completed' => 'รับผ้าที่ร้านแล้ว',
     'delivery_in_progress' => 'กำลังจัดส่ง',
     'completed' => 'จัดส่งสำเร็จ',
     _ => s,
@@ -366,6 +863,7 @@ class _OrderCard extends StatelessWidget {
     'drying' => Colors.blue,
     'waiting_delivery' => Colors.green,
     'delivery_heading_to_shop' => Colors.blue,
+    'store_pickup_in_progress' => Colors.blue,
     'delivery_pickup_completed' => Colors.blue,
     'delivery_in_progress' => Colors.blue,
     'completed' => Colors.green,
@@ -377,6 +875,7 @@ class _OrderCard extends StatelessWidget {
     'wash_dry' => 'ซัก + อบ',
     _ => t,
   };
+
   void _showUpdateBottomSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -446,9 +945,18 @@ class _OrderCard extends StatelessWidget {
   Widget _buildHeaderRow() => Row(
     mainAxisAlignment: MainAxisAlignment.spaceBetween,
     children: [
-      Text(
-        '#${order.id}'.substring(0, 10).toUpperCase(),
-        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '#${order.id}'.substring(0, 10).toUpperCase(),
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          Text(
+            _formatDate(order.orderDatetime),
+            style: const TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+        ],
       ),
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -463,6 +971,7 @@ class _OrderCard extends StatelessWidget {
       ),
     ],
   );
+
   Widget _buildCustomerInfo(dynamic customer) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
@@ -507,6 +1016,7 @@ class _OrderCard extends StatelessWidget {
       ),
     ],
   );
+
   Widget _buildServiceRow() => Row(
     children: [
       const Icon(
@@ -521,6 +1031,7 @@ class _OrderCard extends StatelessWidget {
       ),
     ],
   );
+
   Widget _buildMachineInfo() {
     final washerName = _needsWash ? order.washer?.name : null;
     final dryerName = _needsDry ? order.dryer?.name : null;
@@ -566,6 +1077,7 @@ class _OrderCard extends StatelessWidget {
       style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color),
     ),
   );
+
   Widget _buildNoteRow(String note) => Padding(
     padding: const EdgeInsets.only(top: 8),
     child: Row(
@@ -584,6 +1096,7 @@ class _OrderCard extends StatelessWidget {
       ],
     ),
   );
+
   Widget _buildActionButton(BuildContext context) {
     if (_isWaitingForCalculate) {
       return SizedBox(
@@ -740,6 +1253,7 @@ class _OrderCard extends StatelessWidget {
       style: TextStyle(color: color, fontSize: 13),
     ),
   );
+
   Future<void> _callStartPaid(BuildContext context) async {
     try {
       final res = await http.put(
@@ -783,7 +1297,7 @@ class _OrderCard extends StatelessWidget {
                       height: 40,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: Color(0xFFE6F3FF),
+                        color: const Color(0xFFE6F3FF),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: const Icon(
@@ -904,7 +1418,7 @@ class _OrderCard extends StatelessWidget {
                           await _callStartDry();
                         },
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Color(0xFF0593FF),
+                          backgroundColor: const Color(0xFF0593FF),
                           foregroundColor: Colors.white,
                           elevation: 0,
                           padding: const EdgeInsets.symmetric(vertical: 14),
@@ -966,45 +1480,6 @@ class _OrderCard extends StatelessWidget {
     );
   }
 
-  Widget _infoChip({
-    required IconData icon,
-    required String label,
-    required String value,
-  }) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.orange.shade100),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 14, color: Colors.orange),
-            const SizedBox(width: 6),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(fontSize: 10, color: Colors.grey),
-                ),
-                Text(
-                  value,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> _callStartDry() async {
     try {
       final res = await http.put(
@@ -1041,6 +1516,7 @@ class _UpdateStatusSheet extends StatefulWidget {
 
 class _UpdateStatusSheetState extends State<_UpdateStatusSheet> {
   bool _isSubmitting = false;
+
   Future<void> _submit() async {
     setState(() => _isSubmitting = true);
     try {

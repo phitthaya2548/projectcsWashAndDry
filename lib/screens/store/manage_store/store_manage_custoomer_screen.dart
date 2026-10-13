@@ -142,7 +142,7 @@ class _ManageCustomersScreenState extends State<ManageCustomersScreen> {
   ),
   centerTitle: true,
         title: const Text(
-          'ข้อมูลผู้ใช้',
+          'ข้อมูลลูกค้า',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         iconTheme: const IconThemeData(color: Colors.white),
@@ -171,7 +171,7 @@ class _ManageCustomersScreenState extends State<ManageCustomersScreen> {
                 controller: _searchController,
                 onChanged: _onSearchChanged,
                 decoration: const InputDecoration(
-                  hintText: 'ค้นหาผู้ใช้',
+                  hintText: 'ค้นหาลูกค้า',
                   border: InputBorder.none,
                   contentPadding:
                       EdgeInsets.symmetric(horizontal: 20, vertical: 12),

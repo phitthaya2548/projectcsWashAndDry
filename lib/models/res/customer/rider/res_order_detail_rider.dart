@@ -40,7 +40,11 @@ class OrderDetailData {
   String? detergentOption;
   String? note;
   DateTime? orderDatetime;
+  double? distanceKm;
+  FromLocationModel? fromLocation;
   CustomerModel? customer;
+  RiderModel? riderPickup;
+  RiderModel? riderDelivery;
   AddressModel? address;
 
   OrderDetailData({
@@ -50,7 +54,11 @@ class OrderDetailData {
     this.detergentOption,
     this.note,
     this.orderDatetime,
+    this.distanceKm,
+    this.fromLocation,
     this.customer,
+    this.riderPickup,
+    this.riderDelivery,
     this.address,
   });
 
@@ -62,9 +70,19 @@ class OrderDetailData {
         detergentOption: json["detergent_option"],
         note: json["note"],
         orderDatetime: parseFirestoreDateTime(json["order_datetime"]),
+        distanceKm: (json["distance_km"] as num?)?.toDouble(),
+        fromLocation: json["from_location"] == null
+            ? null
+            : FromLocationModel.fromJson(json["from_location"]),
         customer: json["customer"] == null
             ? null
             : CustomerModel.fromJson(json["customer"]),
+        riderPickup: json["rider_pickup"] == null
+            ? null
+            : RiderModel.fromJson(json["rider_pickup"]),
+        riderDelivery: json["rider_delivery"] == null
+            ? null
+            : RiderModel.fromJson(json["rider_delivery"]),
         address: json["address"] == null
             ? null
             : AddressModel.fromJson(json["address"]),
@@ -77,7 +95,11 @@ class OrderDetailData {
         "detergent_option": detergentOption,
         "note": note,
         "order_datetime": orderDatetime?.toIso8601String(),
+        "distance_km": distanceKm,
+        "from_location": fromLocation?.toJson(),
         "customer": customer?.toJson(),
+        "rider_pickup": riderPickup?.toJson(),
+        "rider_delivery": riderDelivery?.toJson(),
         "address": address?.toJson(),
       };
 }
@@ -85,20 +107,86 @@ class OrderDetailData {
 class CustomerModel {
   String? fullname;
   String? phone;
+  String? profileImage;
 
   CustomerModel({
     this.fullname,
     this.phone,
+    this.profileImage,
   });
 
   factory CustomerModel.fromJson(Map<String, dynamic> json) => CustomerModel(
         fullname: json["fullname"],
         phone: json["phone"],
+        profileImage: json["profile_image"],
       );
 
   Map<String, dynamic> toJson() => {
         "fullname": fullname,
         "phone": phone,
+        "profile_image": profileImage,
+      };
+}
+
+class RiderModel {
+  String? id;
+  String? fullname;
+  String? phone;
+  String? profileImage;
+  double? latitude;
+  double? longitude;
+
+  RiderModel({
+    this.id,
+    this.fullname,
+    this.phone,
+    this.profileImage,
+    this.latitude,
+    this.longitude,
+  });
+
+  factory RiderModel.fromJson(Map<String, dynamic> json) => RiderModel(
+        id: json["id"],
+        fullname: json["fullname"],
+        phone: json["phone"],
+        profileImage: json["profile_image"],
+        latitude: (json["latitude"] as num?)?.toDouble(),
+        longitude: (json["longitude"] as num?)?.toDouble(),
+      );
+
+  Map<String, dynamic> toJson() => {
+        "id": id,
+        "fullname": fullname,
+        "phone": phone,
+        "profile_image": profileImage,
+        "latitude": latitude,
+        "longitude": longitude,
+      };
+}
+
+/// จุดเริ่มต้นที่ backend ใช้คำนวณระยะทาง (source = "query" หรือ "rider")
+class FromLocationModel {
+  double? latitude;
+  double? longitude;
+  String? source;
+
+  FromLocationModel({
+    this.latitude,
+    this.longitude,
+    this.source,
+  });
+
+  factory FromLocationModel.fromJson(Map<String, dynamic> json) =>
+      FromLocationModel(
+        latitude: (json["latitude"] as num?)?.toDouble(),
+        longitude: (json["longitude"] as num?)?.toDouble(),
+        source: json["source"],
+      );
+
+  Map<String, dynamic> toJson() => {
+        "latitude": latitude,
+        "longitude": longitude,
+        "source": source,
       };
 }
 
@@ -115,8 +203,8 @@ class AddressModel {
 
   factory AddressModel.fromJson(Map<String, dynamic> json) => AddressModel(
         addressText: json["address_text"],
-        latitude: json["latitude"]?.toDouble(),
-        longitude: json["longitude"]?.toDouble(),
+        latitude: (json["latitude"] as num?)?.toDouble(),
+        longitude: (json["longitude"] as num?)?.toDouble(),
       );
 
   Map<String, dynamic> toJson() => {
